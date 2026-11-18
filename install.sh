@@ -11,7 +11,10 @@
 # Env: WISPR_LINUX_DMG=/path/to/Flow.dmg reuses a downloaded .dmg; WISPR_LINUX_NO_DEPS=1 skips package installs.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
+# Use the local checkout only when run as a file; piped (curl | bash) always fetches the repo,
+# never trusting whatever happens to be in the current directory.
+REPO_DIR=""
+if [ -f "${BASH_SOURCE[0]:-}" ]; then REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; fi
 REPO_TARBALL="https://github.com/cufelix/wispr-flow-linux/archive/refs/heads/main.tar.gz"
 PREFIX="${WISPR_LINUX_PREFIX:-$HOME/.local/share/wispr-flow-linux}"
 BIN_DIR="$HOME/.local/bin"
@@ -104,7 +107,7 @@ mkdir -p "$WORK/7z" && tar -xJf "$WORK/7z.tar.xz" -C "$WORK/7z" 7zzs
 SEVENZIP="$WORK/7z/7zzs"
 
 # Running via `curl | bash`: fetch the rest of this repository (patcher/, helper/).
-if [ ! -f "$REPO_DIR/patcher/prepare.js" ]; then
+if [ -z "$REPO_DIR" ] || [ ! -f "$REPO_DIR/patcher/prepare.js" ]; then
   say "Fetching wispr-flow-linux"
   mkdir -p "$WORK/repo"
   curl -fsSL "$REPO_TARBALL" | tar -xz -C "$WORK/repo" --strip-components=1
