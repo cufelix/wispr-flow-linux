@@ -3,9 +3,12 @@
 //! (Electron matches shortcuts itself), pastes dictated text and reports the focused app.
 
 mod a11y;
+mod apps;
 mod input;
 mod ipc;
 mod keys;
+mod media;
+mod mic;
 mod output;
 
 use serde_json::{json, Value};
@@ -63,7 +66,7 @@ fn main() {
     let mut pending = Vec::new();
     loop {
         let n = match stdin.read(&mut chunk) {
-            Ok(0) | Err(_) => return, // Electron went away
+            Ok(0) | Err(_) => { media::shutdown(); return } // Electron went away
             Ok(n) => n,
         };
         pending.extend_from_slice(&chunk[..n]);
@@ -125,10 +128,18 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "GetAppInfo" => { let a = app(); json!({ "AppInfo": { "payload": {
             "appName": a.class, "bundleId": a.class.to_lowercase(), "url": "" } } }) }
         "GetHardwareInfo" => json!({ "HardwareInfo": { "payload": { "hasAppleFnKey": false, "isClamshellMode": false } } }),
-        "GetRunningApps" => json!({ "RunningApps": { "payload": { "apps": [] } } }),
+        "GetRunningApps" => apps::running(),
+        "GetDeviceInfo" => json!({ "DeviceInfo": { "payload": { "status": "missing" } } }),
+        "GetMicrophoneHolders" => mic::snapshot(),
+        "SetMicrophoneHoldersMonitor" => {
+            let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
+            mic::set_monitor(p["enabled"].as_bool().unwrap_or(false), p["cadenceMs"].as_u64())
+        }
+        "DictationStop" => { ipc::respond(&uuid, json!({ "ACK": true })); media::dictation_stop(); return; }
         "GetTextBoxInfo" => json!({ "TextBoxInfo": text_box_info(out.map(|o| o.lock().unwrap().active_app())) }),
         "DictationStart" => {
             ipc::respond(&uuid, json!({ "ACK": true }));
+            media::dictation_start();
             ipc::request("TextBoxInfo", text_box_info(out.map(|o| o.lock().unwrap().active_app())));
             let a = app();
             if !a.class.is_empty() {
@@ -161,6 +172,7 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         }
         "HelperAppShutdown" => {
             ipc::respond(&uuid, json!({ "ACK": true }));
+            media::shutdown();
             std::process::exit(0);
         }
         // Everything else is macOS/Windows integration (meetings, BLE, accessibility trees...): acknowledge.

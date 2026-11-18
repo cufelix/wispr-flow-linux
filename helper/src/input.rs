@@ -20,7 +20,7 @@ pub fn start(on_key: OnKey, wayland: bool) -> Option<&'static str> {
 }
 
 fn is_keyboard_or_mouse(d: &evdev::Device) -> bool {
-    d.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_LEFTCTRL) || k.contains(KeyCode::BTN_SIDE))
+    d.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_LEFTCTRL) || k.contains(KeyCode::BTN_SIDE) || k.contains(KeyCode::BTN_MIDDLE))
         && d.name() != Some(crate::output::VIRTUAL_KBD_NAME)
 }
 

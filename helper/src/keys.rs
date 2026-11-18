@@ -62,13 +62,10 @@ pub fn evdev_letter(code: u16) -> Option<char> {
     (65..=90).contains(&vk).then(|| (vk as u8 + 32) as char)
 }
 
-/// Mouse side buttons, reported as Wispr "mouse" input (BTN_SIDE/BTN_EXTRA).
+/// Mouse buttons beyond left/right as Wispr "mouse" input. Wispr's table (OS button number -> shortcut key):
+/// 2 middle, 3 mouse4 (back), 4 mouse5 (forward), 5..9 mouse6..10. evdev BTN_MIDDLE..BTN_TASK+ are consecutive.
 pub fn evdev_mouse_button(code: u16) -> Option<u16> {
-    match code {
-        0x113 => Some(4), // mouse4 / back
-        0x114 => Some(5), // mouse5 / forward
-        _ => None,
-    }
+    (0x112..=0x119).contains(&code).then(|| code - 0x110)
 }
 
 #[cfg(test)]
@@ -85,6 +82,16 @@ mod tests {
         assert_eq!(evdev_to_vk(68), Some(121)); // F10
         assert_eq!(evdev_to_vk(194), Some(135)); // F24
         assert_eq!(evdev_to_vk(240), None);
+    }
+
+    #[test]
+    fn maps_mouse_buttons() {
+        assert_eq!(evdev_mouse_button(0x112), Some(2)); // middle
+        assert_eq!(evdev_mouse_button(0x113), Some(3)); // BTN_SIDE = mouse4
+        assert_eq!(evdev_mouse_button(0x114), Some(4)); // BTN_EXTRA = mouse5
+        assert_eq!(evdev_mouse_button(0x119), Some(9));
+        assert_eq!(evdev_mouse_button(0x110), None); // left click
+        assert_eq!(evdev_mouse_button(0x11a), None);
     }
 
     #[test]
