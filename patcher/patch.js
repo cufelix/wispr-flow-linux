@@ -26,6 +26,21 @@ const patches = [
     re: /([a-zA-Z$]+\.H8)(\)\{const e=[a-zA-Z$]+\((?:process\.argv|t)\.find\(e=>e\.startsWith\("wispr-flow:"\))/,
     to: (_, h, rest) => `${h}||${LINUX}${rest}`,
   },
+  {
+    name: "native window frame for the main window on Linux (renderer draws controls only on macOS/Windows)",
+    re: /(trafficLightPosition:\(0,[a-zA-Z$]+\.xC\)\("hub",[^;]{0,120}?\):Object\.assign\(t,\{frame:)!1(,autoHideMenuBar:!0\}\))/,
+    to: (_, a, b) => `${a}${LINUX}${b}`,
+  },
+  {
+    name: "native window frame for the secondary window on Linux",
+    re: /(trafficLightPosition:\{x:12,y:16\}\}\):Object\.assign\(t,\{titleBarStyle:)"hidden"(,autoHideMenuBar:!0\}\))/,
+    to: (_, a, b) => `${a}${LINUX}?"default":"hidden"${b}`,
+  },
+  {
+    name: "create the main window focusable on Linux (window managers skip the frame otherwise)",
+    re: /(focusable:)!1(\};[a-zA-Z$]+\.tD\?Object\.assign\(t,\{frame:!1,titleBarStyle:"hidden",trafficLightPosition:\(0,[a-zA-Z$]+\.xC\)\("hub")/,
+    to: (_, a, b) => `${a}${LINUX}${b}`,
+  },
 ];
 
 function applyPatches(src) {
