@@ -1,0 +1,52 @@
+name: distros
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  pull_request:
+    paths:
+      - install.sh
+      - patcher/**
+      - helper/**
+      - tests/**
+
+permissions:
+  contents: read
+
+jobs:
+  dmg:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Wispr Flow dmg once
+        run: |
+          url=$(curl -fsSIL -o /dev/null -w '%{url_effective}' https://dl.wisprflow.ai/mac-apple/latest)
+          curl -fsSL -o flow.dmg "$url"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flow-dmg
+          path: flow.dmg
+          retention-days: 1
+
+  install:
+    needs: dmg
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - debian:12
+          - debian:13
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - archlinux:latest
+          - fedora:latest
+          - opensuse/tumbleweed
+          - opensuse/leap:15.6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: flow-dmg
+      - name: Install in ${{ matrix.image }}
+        run: WISPR_LINUX_DMG=$PWD/flow.dmg tests/distro-test.sh "${{ matrix.image }}"

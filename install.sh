@@ -5,9 +5,14 @@
 #
 #   ./install.sh            install or update to the latest Wispr Flow release
 #   ./install.sh uninstall  remove it (keeps your Wispr settings in ~/.config/Wispr Flow)
+#   curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/install.sh | bash
+#
+# Works from any login shell (bash, zsh, fish...): the script itself always runs in bash.
+# Env: WISPR_LINUX_DMG=/path/to/Flow.dmg reuses a downloaded .dmg; WISPR_LINUX_NO_DEPS=1 skips package installs.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
+REPO_TARBALL="https://github.com/cufelix/wispr-flow-linux/archive/refs/heads/main.tar.gz"
 PREFIX="${WISPR_LINUX_PREFIX:-$HOME/.local/share/wispr-flow-linux}"
 BIN_DIR="$HOME/.local/bin"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
@@ -41,26 +46,90 @@ case "$(uname -m)" in
   *) die "unsupported CPU architecture $(uname -m) (x86_64 and arm64 only)" ;;
 esac
 
-SEVENZIP=$(command -v 7z || command -v 7zz || command -v 7za || true)
-[ -n "$SEVENZIP" ] || die "7-Zip is required to open the macOS .dmg. Install it:
-  Debian/Ubuntu: sudo apt install p7zip-full    Fedora: sudo dnf install p7zip-plugins
-  Arch: sudo pacman -S 7zip                     openSUSE: sudo zypper install 7zip"
-for tool in curl tar; do command -v "$tool" >/dev/null || die "$tool is required"; done
+SUDO=""
+[ "$(id -u)" -eq 0 ] || SUDO=sudo
+
+# Tools to unpack the .dmg plus the shared libraries Electron needs (minimal installs lack some).
+install_deps() {
+  [ -z "${WISPR_LINUX_NO_DEPS:-}" ] || { say "WISPR_LINUX_NO_DEPS set, not installing packages"; return; }
+  if [ -n "$SUDO" ] && ! command -v sudo >/dev/null; then
+    die "missing packages and no sudo; install xz, curl and Electron's libraries (nss, gtk3, alsa, libgbm) as root"
+  fi
+  say "Installing required packages (you may be asked for your password)"
+  if command -v apt-get >/dev/null; then
+    $SUDO apt-get update -qq
+    # Debian 13 / Ubuntu 24.04 renamed several libs to *t64 during the 64-bit time_t transition
+    local pkgs=() p
+    for p in xz-utils curl ca-certificates tar libnss3 libgtk-3-0 libgbm1 libasound2 libxss1 libxtst6 \
+             libnotify4 libsecret-1-0 libdrm2 libxkbcommon0 libatk-bridge2.0-0 libcups2 xdg-utils util-linux; do
+      if apt-cache show "${p}t64" >/dev/null 2>&1; then pkgs+=("${p}t64"); else pkgs+=("$p"); fi
+    done
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" >/dev/null
+  elif command -v dnf >/dev/null; then
+    $SUDO dnf install -y -q xz curl tar nss gtk3 mesa-libgbm alsa-lib libXScrnSaver libXtst libnotify libsecret \
+      libdrm libxkbcommon at-spi2-atk cups-libs xdg-utils util-linux
+  elif command -v pacman >/dev/null; then
+    local arch_pkgs=(xz curl tar nss gtk3 mesa alsa-lib libxss libxtst libnotify libsecret libdrm
+                     libxkbcommon at-spi2-core libcups xdg-utils util-linux)
+    # a stale package database fails with 404s; Arch only supports full upgrades, so then use -Syu
+    $SUDO pacman -S --needed --noconfirm "${arch_pkgs[@]}" 2>/dev/null \
+      || $SUDO pacman -Syu --needed --noconfirm "${arch_pkgs[@]}"
+  elif command -v zypper >/dev/null; then
+    $SUDO zypper --non-interactive --quiet install xz curl tar mozilla-nss libgtk-3-0 libgbm1 alsa \
+      libXss1 libXtst6 libnotify4 libsecret-1-0 libdrm2 libxkbcommon0 libatk-bridge-2_0-0 libcups2 xdg-utils util-linux
+  else
+    die "unknown package manager; install xz, curl, tar and Electron's libraries (nss, gtk3, alsa, libgbm), then rerun"
+  fi
+  DEPS_DONE=1
+}
+
+DEPS_DONE=""
+if ! command -v curl >/dev/null || ! command -v tar >/dev/null || ! command -v xz >/dev/null; then
+  install_deps
+fi
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-say "Finding the latest Wispr Flow release"
-DMG_URL=$(curl -fsSIL -o /dev/null -w '%{url_effective}' https://dl.wisprflow.ai/mac-apple/latest)
-VERSION=$(basename "$DMG_URL" .dmg | sed 's/^Flow-v//')
-say "Downloading Wispr Flow $VERSION (macOS build, ~300 MB)"
-curl -fL --progress-bar -o "$WORK/flow.dmg" "$DMG_URL"
+# Official static 7-Zip: distro p7zip (e.g. 16.02 on Ubuntu 22.04) cannot open current macOS .dmg files.
+SEVENZIP_VERSION=2606
+case "$ARCH" in
+  x64) SEVENZIP_SHA256=2b539cf067b2ad48e1baa5093dbaa8818b73542d1222a0ffde9dc5f2922ea62e ;;
+  arm64) SEVENZIP_SHA256=edcc408aacce77da5223728f2eceb5e9f6dc713b8a9df934ad21e2a7f7560627 ;;
+esac
+curl -fsSL -o "$WORK/7z.tar.xz" \
+  "https://github.com/ip7z/7zip/releases/download/${SEVENZIP_VERSION:0:2}.${SEVENZIP_VERSION:2}/7z$SEVENZIP_VERSION-linux-$ARCH.tar.xz"
+echo "$SEVENZIP_SHA256  $WORK/7z.tar.xz" | sha256sum -c --quiet || die "7-Zip checksum mismatch"
+mkdir -p "$WORK/7z" && tar -xJf "$WORK/7z.tar.xz" -C "$WORK/7z" 7zzs
+SEVENZIP="$WORK/7z/7zzs"
+
+# Running via `curl | bash`: fetch the rest of this repository (patcher/, helper/).
+if [ ! -f "$REPO_DIR/patcher/prepare.js" ]; then
+  say "Fetching wispr-flow-linux"
+  mkdir -p "$WORK/repo"
+  curl -fsSL "$REPO_TARBALL" | tar -xz -C "$WORK/repo" --strip-components=1
+  REPO_DIR="$WORK/repo"
+fi
+
+if [ -n "${WISPR_LINUX_DMG:-}" ]; then
+  [ -f "$WISPR_LINUX_DMG" ] || die "WISPR_LINUX_DMG=$WISPR_LINUX_DMG not found"
+  say "Using local Wispr Flow .dmg"
+  ln -s "$(cd "$(dirname "$WISPR_LINUX_DMG")" && pwd)/$(basename "$WISPR_LINUX_DMG")" "$WORK/flow.dmg"
+else
+  say "Finding the latest Wispr Flow release"
+  DMG_URL=$(curl -fsSIL -o /dev/null -w '%{url_effective}' https://dl.wisprflow.ai/mac-apple/latest)
+  say "Downloading $(basename "$DMG_URL") (macOS build, ~300 MB)"
+  curl -fL --progress-bar -o "$WORK/flow.dmg" "$DMG_URL"
+fi
 
 say "Unpacking the .dmg"
 "$SEVENZIP" x -y -o"$WORK/dmg" "$WORK/flow.dmg" '*/Wispr Flow.app/Contents/Resources/*' \
+  '*/Wispr Flow.app/Contents/Info.plist' \
   '*/Wispr Flow.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist' >/dev/null
 CONTENTS=$(find "$WORK/dmg" -maxdepth 3 -type d -path '*/Wispr Flow.app/Contents' | head -1)
 [ -n "$CONTENTS" ] || die "unexpected .dmg layout"
+VERSION=$(grep -A1 CFBundleShortVersionString "$CONTENTS/Info.plist" | grep -oE '[0-9][0-9.]+' | head -1)
+[ -n "$VERSION" ] || die "could not detect the Wispr Flow version"
 ELECTRON_VERSION=$(grep -A1 CFBundleVersion "$CONTENTS/Frameworks/Electron Framework.framework/Versions/A/Resources/Info.plist" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 [ -n "$ELECTRON_VERSION" ] || die "could not detect the Electron version"
 
@@ -69,6 +138,13 @@ curl -fL --progress-bar -o "$WORK/electron.zip" \
   "https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION/electron-v$ELECTRON_VERSION-linux-$ARCH.zip"
 "$SEVENZIP" x -y -o"$WORK/electron" "$WORK/electron.zip" >/dev/null
 mv "$WORK/electron/electron" "$WORK/electron/wispr-flow" # a non-"electron" name makes app.isPackaged true
+
+# Electron's shared libraries: install them if this system lacks any.
+if ldd "$WORK/electron/wispr-flow" 2>/dev/null | grep -q "not found"; then
+  [ -n "$DEPS_DONE" ] || install_deps
+  MISSING=$(ldd "$WORK/electron/wispr-flow" | grep "not found" || true)
+  [ -z "$MISSING" ] || die "Electron still misses libraries: $MISSING"
+fi
 
 say "Converting the app for Linux"
 ELECTRON_RUN_AS_NODE=1 "$WORK/electron/wispr-flow" "$REPO_DIR/patcher/prepare.js" \

@@ -16,19 +16,25 @@ Wispr only ships macOS and Windows builds. The desktop app is built on Electron,
 
 ## Install
 
+One line, from any shell (bash, zsh, fish):
+
 ```bash
-# Debian/Ubuntu: sudo apt install p7zip-full curl   Fedora: sudo dnf install p7zip-plugins curl
-# Arch: sudo pacman -S 7zip curl                    openSUSE: sudo zypper install 7zip curl
-git clone https://github.com/cufelix/wispr-flow-linux && cd wispr-flow-linux
-./install.sh
-wispr-flow
+curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/install.sh | bash
 ```
 
-Click **Sign in via browser**. When you finish signing in, the browser hands the login back to the app through `wispr-flow://`. To dictate, hold the shortcut (default **Ctrl+Super**), speak, then release.
+or from a clone:
 
-- **Update**: run `./install.sh` again. It always fetches Wispr's latest release. If an update changes the code a patch depends on, the installer stops with a clear error and your current install stays as it is.
-- **Uninstall**: `./install.sh uninstall`. Your Wispr settings stay in `~/.config/Wispr Flow`.
-- **Helper**: the installer builds it with `cargo` if Rust is installed. Otherwise it downloads a static binary from this repo's Releases and verifies its SHA-256 checksum.
+```bash
+git clone https://github.com/cufelix/wispr-flow-linux && cd wispr-flow-linux && ./install.sh
+```
+
+The installer detects your package manager (apt, dnf, pacman, zypper) and installs what it needs, asking for your password once. Tested in clean containers on Debian 12/13, Ubuntu 22.04/24.04, Arch, Fedora, openSUSE Tumbleweed and Leap 15.6 (`tests/distro-test.sh`), which covers their derivatives too (Linux Mint, Pop!_OS, Zorin, elementary, Manjaro, EndeavourOS, Nobara...). x86_64 and arm64.
+
+Then start **Wispr Flow** from your app menu (or run `wispr-flow`), click **Sign in via browser**; the browser hands the login back to the app through `wispr-flow://`. Hold the shortcut (default **Ctrl+Super**), speak, release.
+
+- **Update**: run the installer again. It always pulls Wispr's latest release; if an update ever changes the code a patch targets, it stops with a clear error and leaves your current install untouched.
+- **Uninstall**: `./install.sh uninstall` (or `curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/install.sh | bash -s uninstall`). Your Wispr settings stay in `~/.config/Wispr Flow`.
+- **Helper binary**: built with `cargo` if you have Rust, otherwise a prebuilt static binary is downloaded from this repo's Releases and its SHA-256 is verified.
 
 ### Wayland
 
