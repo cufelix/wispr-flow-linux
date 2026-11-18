@@ -1,0 +1,32 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  helper:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo test --release -p wispr-flow-linux-helper
+      - run: cargo build --release -p wispr-flow-linux-helper --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/wispr-flow-linux-helper wispr-flow-linux-helper-${{ matrix.target }}
+      - if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes 2>/dev/null || true # both matrix jobs race here
+          sha256sum wispr-flow-linux-helper-${{ matrix.target }} > wispr-flow-linux-helper-${{ matrix.target }}.sha256
+          gh release upload "$GITHUB_REF_NAME" wispr-flow-linux-helper-${{ matrix.target }} wispr-flow-linux-helper-${{ matrix.target }}.sha256 --clobber

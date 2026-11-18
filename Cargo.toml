@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["helper", "offline"]
+default-members = ["helper"]
+
+[profile.release]
+strip = true
+lto = "thin"
