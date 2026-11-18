@@ -18,7 +18,7 @@ Wispr only ships macOS and Windows builds. The desktop app is built on Electron,
   - It pastes dictated text into the focused app.
   - It reports which app is focused, so per-app styles keep working.
   - It ships as a static binary for X11 and Wayland.
-- **`patcher/`**: seven small, verified patches to the app's main bundle. They skip the macOS "move to Applications" check, launch the Linux helper, pass your desktop session's environment to it, accept `wispr-flow://` sign-in links, and give the windows a normal Linux title bar you can move and close.
+- **`patcher/`**: small, verified patches to the app's bundles. They skip the macOS "move to Applications" check, launch the Linux helper, pass your desktop session's environment to it, accept `wispr-flow://` sign-in links, give the windows a normal Linux title bar, use the Windows default shortcuts (and migrate saved macOS-only ones), manage launch at login, and teach app detection about Linux terminals and mail/chat apps.
 - **`install.sh`**: downloads the latest official macOS release from wisprflow.ai **on your machine**, unpacks it, patches it, adds Linux builds of Electron and SQLite, and installs a launcher, a menu entry, autostart and the `wispr-flow://` URL handler.
 
 **This repository and its releases contain no Wispr code.** The installer downloads the app from Wispr's own server, the same way you would on a Mac.
@@ -65,6 +65,10 @@ sudo udevadm control --reload && sudo udevadm trigger   # then log out and back 
 | Per-app context (name of the focused app) | ✅ X11; on Wayland for apps that support accessibility |
 | Editing selected text (command mode, Polish) | ✅ the selection is copied with Ctrl+C and your clipboard is restored, as Wispr does on Windows |
 | Wispr's key commands (press Enter, undo, select all, move the cursor) | ✅ |
+| Default shortcuts (hands-free, Lens, paste/copy last text, Polish, meeting recorder) | ✅ the Windows defaults; shortcuts saved with Fn/Option/Cmd keys are replaced on start |
+| Launch at login | ✅ the toggle adds/removes `~/.config/autostart/wispr-flow.desktop` and shows its real state |
+| Terminal-aware formatting (GNOME Terminal, Konsole, Ptyxis, kitty, foot...) | ✅ |
+| Tray icon click, Open sound settings | ✅ |
 | Reading text around the cursor for better context | ✅ in apps that support Linux accessibility (AT-SPI), tested with GTK. Password fields are never read |
 | Meeting detection, Wispr's BLE ring and headset buttons | ❌ Wispr turns these on only on macOS and Windows |
 | Automatic updates | ✅ checked every 12 h, installed on restart |

@@ -3,7 +3,7 @@
 // Uses Electron's own Node, so no separate Node/npm install is needed.
 const fs = require("original-fs"); // plain fs without Electron's transparent .asar handling
 const path = require("path");
-const { applyPatches } = require("./patch.js");
+const { applyPatches, applyRendererPatches, rendererBundles } = require("./patch.js");
 
 const [srcRes, outRes] = process.argv.slice(2);
 if (!srcRes || !outRes) throw new Error("usage: prepare.js <mac Resources dir> <electron resources dir>");
@@ -58,6 +58,10 @@ console.log("extracted app.asar");
 
 const mainJs = path.join(app, ".webpack", "main", "index.js");
 fs.writeFileSync(mainJs, applyPatches(fs.readFileSync(mainJs, "utf8")));
+for (const bundle of rendererBundles) {
+  const file = path.join(app, ".webpack", "renderer", bundle, "index.js");
+  fs.writeFileSync(file, applyRendererPatches(fs.readFileSync(file, "utf8"), bundle));
+}
 
 // files the app reads from process.resourcesPath
 for (const item of ["assets", "fasttext", "migrations", "ax-inspect-lib.mjs", "ax-inspect.mjs", "ax-inspect-server.mjs"]) {
