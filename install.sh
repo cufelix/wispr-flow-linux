@@ -63,22 +63,22 @@ install_deps() {
     $SUDO apt-get update -qq
     # Debian 13 / Ubuntu 24.04 renamed several libs to *t64 during the 64-bit time_t transition
     local pkgs=() p
-    for p in xz-utils curl ca-certificates tar libnss3 libgtk-3-0 libgbm1 libasound2 libxss1 libxtst6 \
+    for p in xz-utils gzip findutils gawk curl ca-certificates tar libnss3 libgtk-3-0 libgbm1 libasound2 libxss1 libxtst6 \
              libnotify4 libsecret-1-0 libdrm2 libxkbcommon0 libatk-bridge2.0-0 libcups2 xdg-utils util-linux; do
       if apt-cache show "${p}t64" >/dev/null 2>&1; then pkgs+=("${p}t64"); else pkgs+=("$p"); fi
     done
     $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" >/dev/null
   elif command -v dnf >/dev/null; then
-    $SUDO dnf install -y -q xz curl tar nss gtk3 mesa-libgbm alsa-lib libXScrnSaver libXtst libnotify libsecret \
+    $SUDO dnf install -y -q xz gzip findutils gawk curl tar nss gtk3 mesa-libgbm alsa-lib libXScrnSaver libXtst libnotify libsecret \
       libdrm libxkbcommon at-spi2-atk cups-libs xdg-utils util-linux
   elif command -v pacman >/dev/null; then
-    local arch_pkgs=(xz curl tar nss gtk3 mesa alsa-lib libxss libxtst libnotify libsecret libdrm
+    local arch_pkgs=(xz gzip findutils gawk curl tar nss gtk3 mesa alsa-lib libxss libxtst libnotify libsecret libdrm
                      libxkbcommon at-spi2-core libcups xdg-utils util-linux)
     # a stale package database fails with 404s; Arch only supports full upgrades, so then use -Syu
     $SUDO pacman -S --needed --noconfirm "${arch_pkgs[@]}" 2>/dev/null \
       || $SUDO pacman -Syu --needed --noconfirm "${arch_pkgs[@]}"
   elif command -v zypper >/dev/null; then
-    $SUDO zypper --non-interactive --quiet install xz curl tar mozilla-nss libgtk-3-0 libgbm1 alsa \
+    $SUDO zypper --non-interactive --quiet install xz gzip findutils gawk curl tar mozilla-nss libgtk-3-0 libgbm1 alsa \
       libXss1 libXtst6 libnotify4 libsecret-1-0 libdrm2 libxkbcommon0 libatk-bridge-2_0-0 libcups2 xdg-utils util-linux
   else
     die "unknown package manager; install xz, curl, tar and Electron's libraries (nss, gtk3, alsa, libgbm), then rerun"
@@ -87,7 +87,8 @@ install_deps() {
 }
 
 DEPS_DONE=""
-if ! command -v curl >/dev/null || ! command -v tar >/dev/null || ! command -v xz >/dev/null; then
+have_tools() { local t; for t in curl tar xz gzip find awk sha256sum; do command -v "$t" >/dev/null || return 1; done; }
+if ! have_tools; then
   install_deps
 fi
 

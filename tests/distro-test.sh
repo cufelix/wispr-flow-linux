@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Installs Wispr Flow for Linux in a clean container of each distro, as a normal sudo user,
-# from zsh (or via `curl | bash`), then launches it under Xvfb and checks the helper handshake.
+# from bash or zsh (and via `curl | bash`), then launches it under Xvfb and checks the helper handshake.
 #
 #   tests/distro-test.sh [image ...]          default: all images below
 #   WISPR_LINUX_DMG=~/Downloads/Flow.dmg tests/distro-test.sh   reuse a local .dmg instead of downloading it
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGES=("$@")
-[ ${#IMAGES[@]} -gt 0 ] || IMAGES=(debian:12 debian:13 ubuntu:22.04 ubuntu:24.04 archlinux:latest fedora:latest opensuse/tumbleweed opensuse/leap:15.6)
+[ ${#IMAGES[@]} -gt 0 ] || IMAGES=(debian:12 debian:13 ubuntu:22.04 ubuntu:24.04 archlinux:latest fedora:latest opensuse/tumbleweed opensuse/leap:15.6 linuxmintd/mint22-amd64)
 
+DOCKER_ARGS=()
+# TEST_DNS=<ip> if the default resolver in containers is flaky on your network
+[ -z "${TEST_DNS:-}" ] || DOCKER_ARGS+=(--dns "$TEST_DNS")
 DMG_MOUNT=()
 if [ -n "${WISPR_LINUX_DMG:-}" ]; then
   DMG_MOUNT=(-v "$(realpath "$WISPR_LINUX_DMG"):/flow.dmg:ro" -e WISPR_LINUX_DMG=/flow.dmg)
@@ -27,15 +30,17 @@ elif command -v pacman >/dev/null; then
 elif command -v zypper >/dev/null; then
   zypper --non-interactive --quiet install curl sudo zsh xvfb-run xorg-x11-server-Xvfb procps shadow >/dev/null
 fi
-useradd -m -s /usr/bin/zsh tester 2>/dev/null || useradd -m tester
+SH=${TEST_SHELL:-zsh}
+command -v "$SH" >/dev/null || { echo "RESULT: FAIL setup ($SH not installed, network?)"; exit 1; }
+useradd -m -s "$(command -v $SH)" tester
 echo 'tester ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/tester
 DMG_ENV=""
 [ -n "${WISPR_LINUX_DMG:-}" ] && DMG_ENV="WISPR_LINUX_DMG=$WISPR_LINUX_DMG"
 if [ "${VIA_CURL:-}" = 1 ]; then
   # the one-liner from the README, run from zsh
-  su - tester -c "zsh -c '$DMG_ENV curl -fsSL file:///repo/install.sh | $DMG_ENV bash'" 2>&1 | grep -E '==>|error|not found|denied' || true
+  su - tester -c "$SH -c '$DMG_ENV curl -fsSL file:///repo/install.sh | $DMG_ENV bash'" 2>&1 | grep -E '==>|error|not found|denied' || true
 else
-  su - tester -c "zsh -c 'cd /repo && $DMG_ENV ./install.sh'" 2>&1 | grep -E '==>|error|not found|denied' || true
+  su - tester -c "$SH -c 'cd /repo && $DMG_ENV ./install.sh'" 2>&1 | grep -E '==>|error|not found|denied' || true
 fi
 su - tester -c 'test -x ~/.local/bin/wispr-flow' || { echo "RESULT: FAIL install"; exit 1; }
 su - tester -c '(Xvfb :99 -screen 0 1920x1080x24 >/dev/null 2>&1 &); sleep 2; DISPLAY=:99 timeout 60 ~/.local/bin/wispr-flow > /tmp/run.log 2>&1; true'
@@ -49,7 +54,10 @@ for img in "${IMAGES[@]}"; do
   echo "=== $img"
   via_curl=0
   [ "$img" = "ubuntu:24.04" ] && via_curl=1
-  if docker run --rm --shm-size=1g -v "$REPO:/repo:ro" "${DMG_MOUNT[@]}" -e VIA_CURL=$via_curl "$img" bash -c "$INNER"; then
+  # half the matrix runs the installer from bash, half from zsh
+  case "$img" in debian:12|ubuntu:22.04|archlinux:*|opensuse/leap:*) shell=bash ;; *) shell=zsh ;; esac
+  echo "    (from $shell$([ $via_curl = 1 ] && echo ', piped one-liner'))"
+  if docker run --rm --shm-size=1g "${DOCKER_ARGS[@]}" -v "$REPO:/repo:ro" "${DMG_MOUNT[@]}" -e VIA_CURL=$via_curl -e TEST_SHELL=$shell "$img" bash -c "$INNER"; then
     pass=$((pass + 1))
   fi
 done

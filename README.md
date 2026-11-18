@@ -28,7 +28,7 @@ or from a clone:
 git clone https://github.com/cufelix/wispr-flow-linux && cd wispr-flow-linux && ./install.sh
 ```
 
-The installer detects your package manager (apt, dnf, pacman, zypper) and installs what it needs, asking for your password once. Tested in clean containers on Debian 12/13, Ubuntu 22.04/24.04, Arch, Fedora, openSUSE Tumbleweed and Leap 15.6 (`tests/distro-test.sh`), which covers their derivatives too (Linux Mint, Pop!_OS, Zorin, elementary, Manjaro, EndeavourOS, Nobara...). x86_64 and arm64.
+The installer detects your package manager (apt, dnf, pacman, zypper) and installs what it needs, asking for your password once. Tested in clean containers on Debian 12/13, Ubuntu 22.04/24.04, Linux Mint 22, Arch, Fedora, openSUSE Tumbleweed and Leap 15.6, run as a normal sudo user from both bash and zsh (`tests/distro-test.sh`). That covers their derivatives too (Pop!_OS, Zorin, elementary, Manjaro, EndeavourOS, Nobara...). Builds exist for x86_64 and arm64.
 
 Then start **Wispr Flow** from your app menu (or run `wispr-flow`), click **Sign in via browser**; the browser hands the login back to the app through `wispr-flow://`. Hold the shortcut (default **Ctrl+Super**), speak, release.
 
