@@ -1,0 +1,24 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink); }
+    #end-stage { display: flex; flex-direction: column; align-items: center; gap: 40px; }
+    #end-name { font-family: var(--font-display); font-weight: 500; font-size: 140px; letter-spacing: -0.02em; line-height: 1; }
+    #end-name em { color: var(--accent); }
+    #end-sub { font-family: var(--font-ui); font-size: 34px; color: var(--dim); }
+    #end-cta { font-family: var(--font-mono); font-size: 40px; padding: 20px 44px; background: var(--ink); color: var(--ground); border-radius: 18px; }
+  </style>
+  <div id="root" data-composition-id="endcard" data-width="1920" data-height="1080">
+    <div id="end-stage">
+      <div id="end-name">Wispr Flow <em>for Linux</em></div>
+      <div id="end-sub">Your subscription. The original app. Open-source glue.</div>
+      <div id="end-cta">github.com/cufelix/wispr-flow-linux</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#end-name", { opacity: 0, scale: 1.1, filter: "blur(12px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.5, ease: "expo.out" }, 0.05);
+    tl.fromTo("#end-sub", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.45, ease: "expo.out" }, 0.35);
+    tl.fromTo("#end-cta", { opacity: 0, clipPath: "inset(0 100% 0 0 round 18px)" }, { opacity: 1, clipPath: "inset(0 0% 0 0 round 18px)", duration: 0.4, ease: "power3.out" }, 0.55);
+    window.__timelines["endcard"] = tl;
+  </script>
+</template>

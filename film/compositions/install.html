@@ -1,0 +1,47 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 44px; }
+    #inst-title { font-family: var(--font-display); font-weight: 500; font-size: 84px; color: var(--ink); letter-spacing: -0.01em; }
+    #inst-win { width: 1500px; background: var(--term); border-radius: 22px; box-shadow: 0 30px 80px rgba(0,0,0,.22); overflow: hidden; }
+    #inst-bar { height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 22px; background: #1d1d21; }
+    #inst-bar i { width: 15px; height: 15px; border-radius: 50%; background: #3a3a40; display: block; }
+    #inst-body { padding: 30px 40px 40px; font-family: var(--font-mono); font-variant-ligatures: none; font-size: 30px; line-height: 1.5; color: var(--term-ink); }
+    #inst-cmd { white-space: pre; }
+    #inst-cmd .p { color: var(--ok); }
+    .ln { white-space: pre; opacity: 0; }
+    .ln b { color: #a99cff; font-weight: 700; }
+    .ln.done { color: #7fd6a1; }
+  </style>
+  <div id="root" data-composition-id="install" data-width="1920" data-height="1080">
+    <div id="inst-title">One line. Any shell.</div>
+    <div id="inst-win">
+      <div id="inst-bar"><i></i><i></i><i></i></div>
+      <div id="inst-body">
+        <div id="inst-cmd"><span class="p">$ </span><span id="inst-typed"></span></div>
+        <div class="ln"><b>==&gt;</b> Installing required packages</div>
+        <div class="ln"><b>==&gt;</b> Fetching wispr-flow-linux</div>
+        <div class="ln"><b>==&gt;</b> Downloading Flow-v1.6.1537.dmg (macOS build)</div>
+        <div class="ln"><b>==&gt;</b> Unpacking the .dmg</div>
+        <div class="ln"><b>==&gt;</b> Downloading Electron 43.8.8 for Linux (x64)</div>
+        <div class="ln"><b>==&gt;</b> Converting the app for Linux</div>
+        <div class="ln"><b>==&gt;</b> Fetching the Linux SQLite module</div>
+        <div class="ln"><b>==&gt;</b> Installing the Linux helper</div>
+        <div class="ln done"><b>==&gt;</b> Wispr Flow 1.6.1537 installed.</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const cmd = ["curl -fsSL …/wispr-flow-linux/main/install.sh", "|", "bash"].join(" ");
+    const typed = document.querySelector("#inst-typed");
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#inst-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out" }, 0);
+    tl.fromTo("#inst-win", { opacity: 0, y: 80, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "expo.out" }, 0.05);
+    // deterministic type-on driven by timeline time
+    const state = { n: 0 };
+    tl.to(state, { n: cmd.length, duration: cmd.length * 0.022, ease: "none",
+      onUpdate: () => { typed.textContent = cmd.slice(0, Math.round(state.n)); } }, 0.35);
+    tl.fromTo(".ln", { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.18, ease: "power3.out", stagger: 0.18 }, 1.35);
+    tl.to("#inst-win, #inst-title", { opacity: 0, y: -60, duration: 0.3, ease: "power3.in" }, 5.08);
+    window.__timelines["install"] = tl;
+  </script>
+</template>

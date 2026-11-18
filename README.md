@@ -1,5 +1,14 @@
 # Wispr Flow for Linux
 
+<a href="https://github.com/cufelix/wispr-flow-linux/blob/main/docs/film.mp4">
+  <img src="docs/film.gif" alt="18-second film: a one-line install in a terminal, nine distros with green checks, Ctrl+Super held while a sentence types itself into a note" width="800">
+</a>
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-6d5ce8)](LICENSE)
+![Distros](https://img.shields.io/badge/tested-Debian%20·%20Ubuntu%20·%20Mint%20·%20Arch%20·%20Fedora%20·%20openSUSE-3fa66b)
+![Shells](https://img.shields.io/badge/shell-bash%20·%20zsh-17171a)
+![Arch](https://img.shields.io/badge/arch-x86__64%20·%20arm64-8a867d)
+
 Run the **official [Wispr Flow](https://wisprflow.ai) app on Linux**. You get the same minimal UI and floating dictation bar, the same AI transcription and formatting, and you use **your existing Wispr Flow account and subscription**.
 
 Wispr only ships macOS and Windows builds. The desktop app is built on Electron, so its UI and everything that talks to Wispr's servers already runs on Linux. The missing piece is the small native helper that listens for the dictation shortcut and types text into other apps (Swift on macOS, .NET on Windows). This project fills that gap:
@@ -9,7 +18,7 @@ Wispr only ships macOS and Windows builds. The desktop app is built on Electron,
   - It pastes dictated text into the focused app.
   - It reports which app is focused, so per-app styles keep working.
   - It ships as a static binary for X11 and Wayland.
-- **`patcher/`**: four small, verified patches to the app's main bundle. They skip the macOS "move to Applications" check, launch the Linux helper, pass your desktop session's environment to it, and accept `wispr-flow://` sign-in links.
+- **`patcher/`**: seven small, verified patches to the app's main bundle. They skip the macOS "move to Applications" check, launch the Linux helper, pass your desktop session's environment to it, accept `wispr-flow://` sign-in links, and give the windows a normal Linux title bar you can move and close.
 - **`install.sh`**: downloads the latest official macOS release from wisprflow.ai **on your machine**, unpacks it, patches it, adds Linux builds of Electron and SQLite, and installs a launcher, a menu entry, autostart and the `wispr-flow://` URL handler.
 
 **This repository and its releases contain no Wispr code.** The installer downloads the app from Wispr's own server, the same way you would on a Mac.

@@ -1,0 +1,44 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 50px; color: var(--ink); }
+    #dic-keys { display: flex; align-items: center; gap: 26px; font-family: var(--font-ui); }
+    .key { min-width: 190px; height: 120px; padding: 0 34px; background: #fffdf8; border: 2px solid #d9d2c3; border-bottom-width: 8px; border-radius: 22px; display: flex; align-items: center; justify-content: center; font-size: 44px; font-weight: 600; }
+    #dic-plus { font-size: 54px; color: var(--dim); }
+    #dic-hint { font-family: var(--font-ui); font-size: 30px; color: var(--dim); margin-left: 16px; }
+    #dic-note { width: 1340px; min-height: 230px; background: #fffdf8; border: 2px solid #e3ddd0; border-radius: 26px; padding: 44px 56px; font-family: var(--font-ui); font-size: 46px; line-height: 1.4; box-shadow: 0 30px 80px rgba(0,0,0,.08); }
+    #dic-caret { display: inline-block; width: 3px; height: 52px; background: var(--accent); vertical-align: -8px; margin-left: 3px; }
+    #dic-pill { height: 76px; padding: 0 34px; background: var(--ink); border-radius: 38px; display: flex; align-items: center; gap: 9px; }
+    #dic-pill i { display: block; width: 9px; height: 20px; border-radius: 4px; background: #fff; }
+  </style>
+  <div id="root" data-composition-id="dictate" data-width="1920" data-height="1080">
+    <div id="dic-keys">
+      <div class="key" id="dic-k1">Ctrl</div><div id="dic-plus">+</div><div class="key" id="dic-k2">Super</div>
+      <div id="dic-hint">hold, speak, release</div>
+    </div>
+    <div id="dic-pill"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div id="dic-note"><span id="dic-text"></span><span id="dic-caret"></span></div>
+  </div>
+  <script>
+    const sentence = "Moved the review to Thursday at 10. I'll send the notes tonight.";
+    const out = document.querySelector("#dic-text");
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#dic-keys", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "expo.out" }, 0);
+    tl.fromTo("#dic-note", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.45, ease: "expo.out" }, 0.1);
+    // press both keys
+    tl.to(".key", { y: 6, borderBottomWidth: 2, backgroundColor: "#ece6ff", borderColor: "#6d5ce8", duration: 0.12, ease: "power2.out" }, 0.35);
+    tl.fromTo("#dic-pill", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2)" }, 0.4);
+    // fixed per-bar heights, a fixed number of yoyos: deterministic waveform
+    const h = [30, 52, 22, 60, 40, 18, 56, 34, 48, 26, 58, 38, 20, 44];
+    document.querySelectorAll("#dic-pill i").forEach((el, k) => {
+      tl.to(el, { height: h[k], duration: 0.16, ease: "sine.inOut", yoyo: true, repeat: 5 }, 0.45 + k * 0.02);
+    });
+    // release, text lands
+    tl.to(".key", { y: 0, borderBottomWidth: 8, backgroundColor: "#fffdf8", borderColor: "#d9d2c3", duration: 0.12 }, 1.45);
+    tl.to("#dic-pill", { opacity: 0, scale: 0.8, duration: 0.2, ease: "power3.in" }, 1.45);
+    const st = { n: 0 };
+    tl.to(st, { n: sentence.length, duration: 0.6, ease: "power1.out",
+      onUpdate: () => { out.textContent = sentence.slice(0, Math.round(st.n)); } }, 1.5);
+    tl.to("#dic-keys, #dic-note", { opacity: 0, y: -60, duration: 0.3, ease: "power3.in" }, 4.48);
+    window.__timelines["dictate"] = tl;
+  </script>
+</template>

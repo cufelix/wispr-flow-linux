@@ -1,0 +1,22 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink); }
+    #hook-stage { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    #hook-a, #hook-b { font-family: var(--font-display); font-weight: 500; font-size: 150px; line-height: 1.05; letter-spacing: -0.02em; }
+    #hook-b { color: var(--accent); font-style: italic; }
+  </style>
+  <div id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+    <div id="hook-stage">
+      <div id="hook-a" data-var-text="hookA">Wispr Flow</div>
+      <div id="hook-b" data-var-text="hookB">on Linux.</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // "Wispr Flow" is already on screen at frame 0 (thumbnail); it settles from a slight scale
+    tl.fromTo("#hook-a", { scale: 1.04 }, { scale: 1, duration: 0.8, ease: "expo.out" }, 0);
+    tl.fromTo("#hook-b", { opacity: 0, y: 40, filter: "blur(10px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.5, ease: "expo.out" }, 0.45);
+    tl.to("#hook-stage", { y: -120, opacity: 0, filter: "blur(12px)", duration: 0.3, ease: "power3.in" }, 2.05);
+    window.__timelines["hook"] = tl;
+  </script>
+</template>

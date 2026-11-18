@@ -1,3 +1,5 @@
 /target
 # local analysis copy of the proprietary macOS build: never commit or redistribute
 /vendor-macos
+/film/.hyperframes
+/film/node_modules
