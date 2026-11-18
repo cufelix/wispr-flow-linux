@@ -28,7 +28,7 @@ function linuxAutostart(on) {
   if (fs.existsSync(file)) return;
   const exec = path.join(os.homedir(), ".local", "bin", "wispr-flow").replace(/%/g, "%%"); // same entry as install.sh
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=Wispr Flow\nComment=Voice dictation in every app\nExec="${exec}" \nIcon=${path.join(process.resourcesPath, "wispr-flow.png")}\nTerminal=false\nCategories=Utility;Accessibility;\nStartupWMClass=Wispr Flow\nMimeType=x-scheme-handler/wispr-flow;\n`);
+  fs.writeFileSync(file, `[Desktop Entry]\nType=Application\nName=Wispr Flow\nComment=Voice dictation in every app\nExec="${exec}" --autostart\nIcon=${path.join(process.resourcesPath, "wispr-flow.png")}\nTerminal=false\nCategories=Utility;Accessibility;\nStartupWMClass=Wispr Flow\nMimeType=x-scheme-handler/wispr-flow;\n`);
 }
 
 // Make the "Launch at login" pref reflect the real autostart entry.
@@ -144,9 +144,9 @@ const patches = [
     to: (_, a, b, offset, src) => `${a}${LINUX}&&(${syncLinuxAutostartPref})(e,${moduleAlias(src, offset, MODULE.prefsSetter)}.xB,${linuxAutostart});${b}`,
   },
   {
-    name: "launched at login: start hidden on Linux when launch-at-login is on (as on Windows)",
+    name: "launched at login: start hidden on Linux when started by the autostart entry (as on Windows)",
     re: /([a-zA-Z$]+\.H8)(&&[a-zA-Z$]+\.RA\.prefs\?\.user\?\.openAtLogin&&[a-zA-Z$]+\.RA\.prefs\.user\.onboardingCompleted\?\{show:!1)/,
-    to: (_, h, rest) => `(${h}||${LINUX})${rest}`,
+    to: (_, h, rest) => `(${h}||${LINUX}&&process.argv.includes("--autostart"))${rest}`,
   },
   {
     name: "recognize Linux terminals (TERMINAL_APPS)",

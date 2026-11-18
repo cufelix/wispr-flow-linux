@@ -287,7 +287,7 @@ MimeType=x-scheme-handler/wispr-flow;
 DESKTOP
 }
 desktop_entry %U > "$APPS_DIR/wispr-flow.desktop"
-desktop_entry "" > "$AUTOSTART_DIR/wispr-flow.desktop"
+desktop_entry --autostart > "$AUTOSTART_DIR/wispr-flow.desktop" # starts hidden in the tray
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
 command -v xdg-mime >/dev/null && xdg-mime default wispr-flow.desktop x-scheme-handler/wispr-flow || true
 
