@@ -35,6 +35,33 @@ pub fn evdev_to_vk(code: u16) -> Option<u16> {
     Some(vk)
 }
 
+/// Windows virtual-key code -> evdev code (for SimulateKeyPress). Generic Ctrl/Shift/Alt map to the left key.
+pub fn vk_to_evdev(vk: u16) -> Option<u16> {
+    match vk {
+        16 => Some(42),
+        17 => Some(29),
+        18 => Some(56),
+        _ => (1..=194).find(|&c| evdev_to_vk(c) == Some(vk)),
+    }
+}
+
+/// SimulateKeyPress modifier names -> evdev code.
+pub fn modifier_to_evdev(flag: &str) -> Option<u16> {
+    match flag.to_ascii_lowercase().as_str() {
+        "control" | "ctrl" => Some(29),
+        "shift" => Some(42),
+        "alt" | "option" => Some(56),
+        "command" | "meta" | "super" | "win" => Some(125),
+        _ => None,
+    }
+}
+
+/// The lowercase ASCII letter an evdev letter key types on QWERTY (its X keysym).
+pub fn evdev_letter(code: u16) -> Option<char> {
+    let vk = evdev_to_vk(code)?;
+    (65..=90).contains(&vk).then(|| (vk as u8 + 32) as char)
+}
+
 /// Mouse side buttons, reported as Wispr "mouse" input (BTN_SIDE/BTN_EXTRA).
 pub fn evdev_mouse_button(code: u16) -> Option<u16> {
     match code {
@@ -58,5 +85,18 @@ mod tests {
         assert_eq!(evdev_to_vk(68), Some(121)); // F10
         assert_eq!(evdev_to_vk(194), Some(135)); // F24
         assert_eq!(evdev_to_vk(240), None);
+    }
+
+    #[test]
+    fn maps_simulated_keys_back() {
+        assert_eq!(vk_to_evdev(13), Some(28)); // Enter, not keypad Enter
+        assert_eq!(vk_to_evdev(37), Some(105)); // left
+        assert_eq!(vk_to_evdev(38), Some(103)); // up
+        assert_eq!(vk_to_evdev(65), Some(30)); // a
+        assert_eq!(vk_to_evdev(17), Some(29)); // ctrl
+        assert_eq!(modifier_to_evdev("Control"), Some(29));
+        assert_eq!(modifier_to_evdev("Shift"), Some(42));
+        assert_eq!(evdev_letter(44), Some('z'));
+        assert_eq!(evdev_letter(28), None);
     }
 }

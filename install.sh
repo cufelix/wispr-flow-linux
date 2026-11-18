@@ -38,8 +38,48 @@ safe_rm_prefix() {
 if [ "${1:-}" = uninstall ]; then
   pkill -x wispr-flow 2>/dev/null || true
   safe_rm_prefix
-  rm -f "$BIN_DIR/wispr-flow" "$APPS_DIR/wispr-flow.desktop" "$AUTOSTART_DIR/wispr-flow.desktop"
+  rm -rf "$PREFIX.staged" "$PREFIX.staging" "$PREFIX.old"
+  rm -f "$PREFIX.lock" "$BIN_DIR/wispr-flow" "$APPS_DIR/wispr-flow.desktop" "$AUTOSTART_DIR/wispr-flow.desktop"
   say "Uninstalled. Your Wispr settings remain in ~/.config/Wispr Flow."
+  exit 0
+fi
+
+# `auto-update`: run by the launcher in the background. At most every 12 h it asks wisprflow.ai
+# for the latest version; a newer one is built into $PREFIX.staged with the installed copy of
+# this script (no code is fetched from GitHub) and the launcher swaps it in on the next start.
+# PIDs of the running app (matched by executable path, not a regex on $PREFIX)
+app_pids() { local p; for p in $(pgrep -x wispr-flow); do [ "$(readlink "/proc/$p/exe")" = "$PREFIX/wispr-flow" ] && echo "$p"; done; true; }
+
+if [ "${1:-}" = auto-update ]; then
+  STATE="${XDG_CACHE_HOME:-$HOME/.cache}/wispr-flow-linux"
+  mkdir -p "$STATE"
+  [ -z "$(find "$STATE/last-check" -mmin -720 2>/dev/null)" ] || exit 0
+  notify() { command -v notify-send >/dev/null && notify-send -a "Wispr Flow" -i "$PREFIX/resources/wispr-flow.png" "$@" 2>/dev/null; }
+  # offline (e.g. right after login): no stamp, so the next hourly run tries again
+  url=$(curl -fsSIL --proto '=https' --proto-redir '=https' -o /dev/null -w '%{url_effective}' \
+    https://dl.wisprflow.ai/mac-apple/latest) || exit 0
+  touch "$STATE/last-check"
+  latest=$(basename "$url" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
+  installed=$(cat "$PREFIX/WISPR_VERSION" 2>/dev/null) || exit 0
+  # only newer versions; skip one that already failed to build (a patch needs updating first)
+  [ -n "$latest" ] && [ "$latest" != "$installed" ] || exit 0
+  [ "$(printf '%s\n' "$installed" "$latest" | sort -V | tail -1)" = "$latest" ] || exit 0
+  [ "$(cat "$PREFIX.staged/WISPR_VERSION" 2>/dev/null)" != "$latest" ] || exit 0
+  [ "$(cat "$STATE/failed" 2>/dev/null)" != "$latest" ] || exit 0
+  if WISPR_LINUX_STAGE=1 WISPR_LINUX_NO_DEPS=1 bash "${BASH_SOURCE[0]}" >"$STATE/update.log" 2>&1; then
+    act=$(notify -A restart="Restart now" "Wispr Flow $latest is ready" \
+      "It will be used the next time Wispr Flow starts." 2>/dev/null) || true
+    if [ "$act" = restart ]; then
+      pids=$(app_pids)
+      [ -z "$pids" ] || kill $pids 2>/dev/null || true
+      for _ in $(seq 40); do [ -z "$(app_pids)" ] && break; sleep 0.5; done
+      setsid "$BIN_DIR/wispr-flow" >/dev/null 2>&1 < /dev/null &
+    fi
+  else
+    echo "$latest" > "$STATE/failed"
+    notify "Wispr Flow $latest could not be updated automatically" \
+      "Your current version keeps working. Run the installer again to update. Details: $STATE/update.log"
+  fi
   exit 0
 fi
 
@@ -138,8 +178,11 @@ ELECTRON_VERSION=$(grep -A1 CFBundleVersion "$CONTENTS/Frameworks/Electron Frame
 [ -n "$ELECTRON_VERSION" ] || die "could not detect the Electron version"
 
 say "Downloading Electron $ELECTRON_VERSION for Linux ($ARCH)"
-curl -fL --progress-bar -o "$WORK/electron.zip" \
-  "https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION/electron-v$ELECTRON_VERSION-linux-$ARCH.zip"
+ELECTRON_URL="https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION"
+curl -fL --progress-bar -o "$WORK/electron.zip" "$ELECTRON_URL/electron-v$ELECTRON_VERSION-linux-$ARCH.zip"
+curl -fsSL -o "$WORK/SHASUMS256.txt" "$ELECTRON_URL/SHASUMS256.txt"
+(cd "$WORK" && grep " \*electron-v$ELECTRON_VERSION-linux-$ARCH.zip\$" SHASUMS256.txt | sed 's# \*.*#  electron.zip#' \
+  | sha256sum -c --quiet) || die "Electron checksum mismatch"
 "$SEVENZIP" x -y -o"$WORK/electron" "$WORK/electron.zip" >/dev/null
 mv "$WORK/electron/electron" "$WORK/electron/wispr-flow" # a non-"electron" name makes app.isPackaged true
 
@@ -162,7 +205,9 @@ cp "$WORK/build/Release/node_sqlite3.node" \
 
 say "Installing the Linux helper"
 HELPER="$WORK/electron/wispr-flow-linux-helper"
-if command -v cargo >/dev/null; then
+if [ -n "${WISPR_LINUX_STAGE:-}" ] && [ -x "$PREFIX/wispr-flow-linux-helper" ]; then
+  cp "$PREFIX/wispr-flow-linux-helper" "$HELPER"
+elif command -v cargo >/dev/null && [ -f "$REPO_DIR/helper/Cargo.toml" ]; then
   (cd "$REPO_DIR" && cargo build --release -p wispr-flow-linux-helper)
   cp "$REPO_DIR/target/release/wispr-flow-linux-helper" "$HELPER"
 else
@@ -175,9 +220,21 @@ fi
 chmod +x "$HELPER"
 
 echo "$VERSION" > "$WORK/electron/WISPR_VERSION"
+# keep a copy of this installer and the patcher for automatic updates
+mkdir -p "$WORK/electron/updater"
+cp -r "$REPO_DIR/install.sh" "$REPO_DIR/patcher" "$WORK/electron/updater/"
+
+if [ -n "${WISPR_LINUX_STAGE:-}" ]; then
+  # auto-update: the launcher moves this in place on the next start
+  rm -rf "$PREFIX.staging" "$PREFIX.staged"
+  cp -a "$WORK/electron" "$PREFIX.staging" && mv "$PREFIX.staging" "$PREFIX.staged"
+  say "Wispr Flow $VERSION staged for the next start"
+  exit 0
+fi
+
 mkdir -p "$(dirname "$PREFIX")" "$BIN_DIR" "$APPS_DIR" "$AUTOSTART_DIR"
 # copy next to the target first (may cross filesystems), then swap, so a failure never leaves you without an app
-rm -rf "$PREFIX.new"
+rm -rf "$PREFIX.new" "$PREFIX.staged"
 cp -a "$WORK/electron" "$PREFIX.new"
 pkill -x wispr-flow 2>/dev/null || true
 safe_rm_prefix
@@ -185,14 +242,32 @@ mv "$PREFIX.new" "$PREFIX"
 
 cat > "$BIN_DIR/wispr-flow" <<LAUNCHER
 #!/usr/bin/env bash
-export WISPR_LINUX_HELPER='$PREFIX/wispr-flow-linux-helper'
+PREFIX=$(printf %q "$PREFIX")
+$(declare -f app_pids)
+# an update downloaded in the background is swapped in when the app is not running
+if [ -f "\$PREFIX.staged/WISPR_VERSION" ] && [ -f "\$PREFIX/WISPR_VERSION" ] && [ -z "\$(app_pids)" ]; then
+  (
+    flock -n 9 || exit 0 # a second launcher at the same moment (autostart + link) leaves it alone
+    [ -f "\$PREFIX.staged/WISPR_VERSION" ] || exit 0
+    rm -rf "\$PREFIX.old"
+    mv "\$PREFIX" "\$PREFIX.old" || exit 0
+    if mv "\$PREFIX.staged" "\$PREFIX"; then rm -rf "\$PREFIX.old"; else mv "\$PREFIX.old" "\$PREFIX"; fi
+  ) 9>"\$PREFIX.lock"
+fi
+# look for updates now and every hour while the app runs (the script itself rate-limits to 12 h)
+if [ -z "\${WISPR_LINUX_NO_UPDATE:-}" ] && [ -f "\$PREFIX/updater/install.sh" ]; then
+  ( while kill -0 \$\$ 2>/dev/null; do
+      WISPR_LINUX_PREFIX="\$PREFIX" bash "\$PREFIX/updater/install.sh" auto-update; sleep 3600
+    done ) </dev/null >/dev/null 2>&1 &
+fi
+export WISPR_LINUX_HELPER="\$PREFIX/wispr-flow-linux-helper"
 SANDBOX=()
 # Chromium's sandbox needs unprivileged user namespaces (or a setuid chrome-sandbox).
 if ! unshare -Ur true 2>/dev/null; then
   echo "wispr-flow: user namespaces unavailable, running without the Chromium sandbox" >&2
   SANDBOX=(--no-sandbox)
 fi
-exec '$PREFIX/wispr-flow' "\${SANDBOX[@]}" "\$@"
+exec "\$PREFIX/wispr-flow" "\${SANDBOX[@]}" "\$@"
 LAUNCHER
 chmod +x "$BIN_DIR/wispr-flow"
 

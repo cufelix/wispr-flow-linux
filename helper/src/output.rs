@@ -24,13 +24,12 @@ pub fn is_terminal(app_class: &str) -> bool {
 pub struct AppInfo {
     pub class: String,
     pub title: String,
+    pub pid: Option<u32>,
 }
 
 pub struct Output {
     clipboard: arboard::Clipboard,
     x11: Option<(RustConnection, Window)>,
-    /// X keycode producing "v" in the current layout (Dvorak, AZERTY... move it).
-    x11_v: u8,
     uinput: Option<VirtualDevice>,
 }
 
@@ -38,14 +37,12 @@ impl Output {
     pub fn new(wayland: bool) -> Result<Self> {
         let clipboard = arboard::Clipboard::new().context("no clipboard (X11/Wayland data-control)")?;
         let x11 = if wayland { None } else { x11rb::connect(None).ok().map(|(c, s)| { let root = c.setup().roots[s].root; (c, root) }) };
-        let x11_v = x11.as_ref().and_then(|(c, _)| keycode_for_keysym(c, 0x76).ok().flatten())
-            .unwrap_or((KeyCode::KEY_V.code() + 8) as u8);
-        // ponytail: uinput sends the physical V key; on non-QWERTY layouts under Wayland that may not be "v".
+        // ponytail: uinput sends physical keys; on non-QWERTY layouts under Wayland letters may move.
         let uinput = if x11.is_some() { None } else { virtual_keyboard().ok() };
         if x11.is_none() && uinput.is_none() {
             bail!("cannot send keystrokes: no X11 and no /dev/uinput access (add a udev rule, see README)");
         }
-        Ok(Self { clipboard, x11, x11_v, uinput })
+        Ok(Self { clipboard, x11, uinput })
     }
 
     /// Puts `text` on the clipboard and presses Ctrl+V (Ctrl+Shift+V in terminals).
@@ -61,10 +58,43 @@ impl Output {
         self.press_chord(&chord)
     }
 
-    fn press_chord(&mut self, keys: &[KeyCode]) -> Result<()> {
+    /// Copies the selection and restores the clipboard. Empty when nothing is selected.
+    /// This is what Wispr does on Windows for command mode. `app` is the focused app's name.
+    pub fn copy_selection(&mut self, app: &str) -> Result<String> {
+        let saved = self.clipboard.get_text().ok();
+        self.clipboard.clear()?;
+        let chord: &[KeyCode] = if app.is_empty() {
+            &[KeyCode::KEY_LEFTCTRL, KeyCode::KEY_INSERT] // unknown app: never risk Ctrl+C (SIGINT) in a terminal
+        } else if is_terminal(app) {
+            &[KeyCode::KEY_LEFTCTRL, KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_C]
+        } else {
+            &[KeyCode::KEY_LEFTCTRL, KeyCode::KEY_C]
+        };
+        let pressed = self.press_chord(chord);
+        let mut text = String::new();
+        for _ in 0..20 {
+            if pressed.is_err() { break; }
+            std::thread::sleep(Duration::from_millis(25));
+            if let Ok(t) = self.clipboard.get_text() && !t.is_empty() {
+                text = t;
+                break;
+            }
+        }
+        // ponytail: restores text only; images/files on the clipboard are lost (needs per-MIME copy).
+        match saved {
+            Some(old) => self.clipboard.set_text(old)?,
+            None => self.clipboard.clear()?,
+        }
+        pressed.map(|_| text)
+    }
+
+    pub fn press_chord(&mut self, keys: &[KeyCode]) -> Result<()> {
         if let Some((conn, root)) = &self.x11 {
-            // X11 keycode = evdev code + 8, except V which follows the active layout
-            let code = |k: &KeyCode| if *k == KeyCode::KEY_V { self.x11_v } else { (k.code() + 8) as u8 };
+            // X11 keycode = evdev code + 8; letters follow the active layout (Dvorak, AZERTY...)
+            let code = |k: &KeyCode| {
+                let sym = crate::keys::evdev_letter(k.code()).map(|c| c as u32);
+                sym.and_then(|s| keycode_for_keysym(conn, s).ok().flatten()).unwrap_or((k.code() + 8) as u8)
+            };
             for k in keys {
                 conn.xtest_fake_input(2, code(k), x11rb::CURRENT_TIME, *root, 0, 0, 0)?;
             }
@@ -87,8 +117,8 @@ impl Output {
 
 fn virtual_keyboard() -> Result<VirtualDevice> {
     let mut keys = AttributeSet::<KeyCode>::new();
-    for k in [KeyCode::KEY_LEFTCTRL, KeyCode::KEY_LEFTSHIFT, KeyCode::KEY_V] {
-        keys.insert(k);
+    for code in 1..=194 {
+        keys.insert(KeyCode::new(code)); // everything SimulateKeyPress may send
     }
     let dev = VirtualDevice::builder()?.name(VIRTUAL_KBD_NAME).with_keys(&keys)?.build()?;
     std::thread::sleep(Duration::from_millis(200)); // compositor needs a moment to pick up a new device
@@ -116,10 +146,12 @@ fn active_x11_app(conn: &RustConnection, root: Window) -> Result<AppInfo> {
         .context("no active window")?;
     let class_raw = conn.get_property(false, active, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)?.reply()?.value;
     // WM_CLASS = "instance\0Class\0"
-    let class = class_raw.split(|&b| b == 0).filter(|s| !s.is_empty()).last().map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
+    let class = class_raw.split(|&b| b == 0).rfind(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
     let utf8 = atom(conn, "UTF8_STRING")?;
     let title_raw = conn.get_property(false, active, atom(conn, "_NET_WM_NAME")?, utf8, 0, 1024)?.reply()?.value;
-    Ok(AppInfo { class, title: String::from_utf8_lossy(&title_raw).into_owned() })
+    let pid = conn.get_property(false, active, atom(conn, "_NET_WM_PID")?, AtomEnum::CARDINAL, 0, 1)?
+        .reply()?.value32().and_then(|mut v| v.next());
+    Ok(AppInfo { class, title: String::from_utf8_lossy(&title_raw).into_owned(), pid })
 }
 
 #[cfg(test)]

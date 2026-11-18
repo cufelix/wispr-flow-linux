@@ -4,6 +4,7 @@
 #
 #   tests/distro-test.sh [image ...]          default: all images below
 #   WISPR_LINUX_DMG=~/Downloads/Flow.dmg tests/distro-test.sh   reuse a local .dmg instead of downloading it
+#   TEST_UPDATE=1 tests/distro-test.sh ubuntu:24.04             also check the background auto-update (downloads ~300 MB)
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGES=("$@")
@@ -43,6 +44,14 @@ else
   su - tester -c "$SH -c 'cd /repo && $DMG_ENV ./install.sh'" 2>&1 | grep -E '==>|error|not found|denied' || true
 fi
 su - tester -c 'test -x ~/.local/bin/wispr-flow' || { echo "RESULT: FAIL install"; exit 1; }
+if [ "${TEST_UPDATE:-}" = 1 ]; then
+  # pretend an older version is installed: the background updater must stage the latest one
+  P=/home/tester/.local/share/wispr-flow-linux
+  echo 0.0.1 > $P/WISPR_VERSION
+  su - tester -c "bash $P/updater/install.sh auto-update"
+  test -f $P.staged/WISPR_VERSION || { echo "RESULT: FAIL auto-update"; tail -20 /home/tester/.cache/wispr-flow-linux/update.log; exit 1; }
+  echo "==> staged $(cat $P.staged/WISPR_VERSION)"
+fi
 su - tester -c '(Xvfb :99 -screen 0 1920x1080x24 >/dev/null 2>&1 &); sleep 2; DISPLAY=:99 timeout 60 ~/.local/bin/wispr-flow > /tmp/run.log 2>&1; true'
 grep -q "Helper service is ready: true" /tmp/run.log && grep -q "migrations have been successfully executed" /tmp/run.log \
   && echo "RESULT: PASS ($(cat /home/tester/.local/share/wispr-flow-linux/WISPR_VERSION))" \
@@ -57,7 +66,7 @@ for img in "${IMAGES[@]}"; do
   # half the matrix runs the installer from bash, half from zsh
   case "$img" in debian:12|ubuntu:22.04|archlinux:*|opensuse/leap:*) shell=bash ;; *) shell=zsh ;; esac
   echo "    (from $shell$([ $via_curl = 1 ] && echo ', piped one-liner'))"
-  if docker run --rm --shm-size=1g "${DOCKER_ARGS[@]}" -v "$REPO:/repo:ro" "${DMG_MOUNT[@]}" -e VIA_CURL=$via_curl -e TEST_SHELL=$shell "$img" bash -c "$INNER"; then
+  if docker run --rm --shm-size=1g "${DOCKER_ARGS[@]}" -v "$REPO:/repo:ro" "${DMG_MOUNT[@]}" -e VIA_CURL=$via_curl -e TEST_SHELL=$shell -e TEST_UPDATE="${TEST_UPDATE:-}" "$img" bash -c "$INNER"; then
     pass=$((pass + 1))
   fi
 done

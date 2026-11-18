@@ -41,7 +41,7 @@ The installer detects your package manager (apt, dnf, pacman, zypper) and instal
 
 Then start **Wispr Flow** from your app menu (or run `wispr-flow`), click **Sign in via browser**; the browser hands the login back to the app through `wispr-flow://`. Hold the shortcut (default **Ctrl+Super**), speak, release.
 
-- **Update**: run the installer again. It always pulls Wispr's latest release; if an update ever changes the code a patch targets, it stops with a clear error and leaves your current install untouched.
+- **Updates are automatic**: while Wispr Flow runs, it checks wisprflow.ai every 12 hours. A new release is downloaded and patched in the background with the installer copy that was installed with the app, so nothing new is fetched from GitHub. A notification then offers **Restart now**, otherwise the update is used the next time the app starts. If a Wispr update ever changes code that a patch targets, the update stops and your current version keeps working. Set `WISPR_LINUX_NO_UPDATE=1` to turn this off, or run the installer again to update by hand.
 - **Uninstall**: `./install.sh uninstall` (or `curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/install.sh | bash -s uninstall`). Your Wispr settings stay in `~/.config/Wispr Flow`.
 - **Helper binary**: built with `cargo` if you have Rust, otherwise a prebuilt static binary is downloaded from this repo's Releases and its SHA-256 is verified.
 
@@ -62,9 +62,12 @@ sudo udevadm control --reload && sudo udevadm trigger   # then log out and back 
 | Sign-in, subscription, settings, history, dictionary, styles | ✅ the original app |
 | Push-to-talk and hands-free dictation with Wispr's cloud models | ✅ |
 | Inserting text into any app | ✅ via clipboard + paste. On X11, terminals get Ctrl+Shift+V; on Wayland every app gets Ctrl+V |
-| Per-app context (name of the focused app) | ✅ X11, ❌ Wayland |
-| Reading text around the cursor, editing selected text, meeting detection, Jabra/BLE headsets | ❌ these depend on macOS/Windows accessibility APIs |
-| Built-in auto-update | ❌ run `./install.sh` again |
+| Per-app context (name of the focused app) | ✅ X11; on Wayland for apps that support accessibility |
+| Editing selected text (command mode, Polish) | ✅ the selection is copied with Ctrl+C and your clipboard is restored, as Wispr does on Windows |
+| Wispr's key commands (press Enter, undo, select all, move the cursor) | ✅ |
+| Reading text around the cursor for better context | ✅ in apps that support Linux accessibility (AT-SPI), tested with GTK. Password fields are never read |
+| Meeting detection, Wispr's BLE ring and headset buttons | ❌ Wispr turns these on only on macOS and Windows |
+| Automatic updates | ✅ checked every 12 h, installed on restart |
 
 ## How it works
 
