@@ -245,13 +245,10 @@ fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
 const BROWSERS: [&str; 7] = ["chrome", "msedge", "vivaldi", "brave", "firefox", "opera", "zen"];
 
 /// App info as Wispr expects it. `bundleId` uses the Windows exe name for apps Wispr knows (chrome, teams...);
-/// `url` is the visible page of a focused browser, read over AT-SPI only when that focus is in this window.
+/// `url` is the visible page of the active browser window, read over AT-SPI.
 fn app_payload(a: &output::AppInfo) -> Value {
     let id = mic::wispr_app_id(&a.class.to_lowercase()).to_string();
-    let url = (BROWSERS.contains(&id.as_str()) && a.pid.is_some() && a.pid == a11y::focused_pid())
-        .then(a11y::active_url)
-        .flatten()
-        .unwrap_or_default();
+    let url = a.pid.filter(|_| BROWSERS.contains(&id.as_str())).and_then(a11y::active_url).unwrap_or_default();
     json!({ "appName": a.class, "bundleId": id, "url": url, "windowTitle": a.title })
 }
 

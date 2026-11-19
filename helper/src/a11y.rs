@@ -89,9 +89,12 @@ fn prop<T: TryFrom<OwnedValue>>(t: &Target, iface: &str, name: &str) -> Option<T
 
 /// Process that owns the focused object (to check it is the app in the active window).
 pub fn focused_pid() -> Option<u32> {
-    let (sender, _) = focus()?;
+    bus_pid(&focus()?.0)
+}
+
+fn bus_pid(bus: &str) -> Option<u32> {
     let m = conn()?.call_method(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", Some("org.freedesktop.DBus"),
-        "GetConnectionUnixProcessID", &(sender.as_str(),)).ok()?;
+        "GetConnectionUnixProcessID", &(bus,)).ok()?;
     m.body().deserialize().ok()
 }
 
@@ -168,14 +171,17 @@ fn children(t: &Target) -> Vec<Target> {
         .unwrap_or_default()
 }
 
-/// URL of the visible page in the focused browser window (Firefox; Chromium once its accessibility is on).
+/// URL of the visible page in the active window of browser process `pid` (Firefox; Chrome/Chromium only with
+/// --force-renderer-accessibility). Found through the registry, not focus: Chrome sends no focus events.
 /// Wispr reads the meeting service (Meet, Teams, Zoom web) from it, as it does from the address bar on Windows.
-pub fn active_url() -> Option<String> {
-    let (bus, _) = focus()?;
+pub fn active_url(pid: u32) -> Option<String> {
     let deadline = Instant::now() + BUDGET;
-    let root = (bus, "/org/a11y/atspi/accessible/root".to_string());
-    let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
-    let (mut stack, mut seen) = (vec![frame], 0);
+    let registry = ("org.a11y.atspi.Registry".to_string(), "/org/a11y/atspi/accessible/root".to_string());
+    let app = children(&registry).into_iter().find(|(bus, _)| bus_pid(bus) == Some(pid))?;
+    let frames = children(&app);
+    let active: Vec<Target> =
+        frames.iter().filter(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0)).cloned().collect();
+    let (mut stack, mut seen) = (if active.is_empty() { frames } else { active }, 0);
     while let Some(node) = stack.pop() {
         seen += 1;
         if seen > URL_NODE_LIMIT || Instant::now() > deadline {
