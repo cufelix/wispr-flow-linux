@@ -73,8 +73,7 @@ fn is_ring(ifaces: &HashMap<String, HashMap<String, OwnedValue>>) -> bool {
         .get(DEVICE)
         .and_then(|d| d.get("UUIDs"))
         .and_then(|v| Vec::<String>::try_from(v.try_clone().ok()?).ok());
-    uuids.is_some_and(|u| u.iter().any(|u| u.eq_ignore_ascii_case(SERVICE)))
-        || str_prop(ifaces, DEVICE, "Name").is_some_and(|n| n.contains("MicRing"))
+    uuids.is_some_and(|u| u.iter().any(|u| u.eq_ignore_ascii_case(SERVICE))) // never by advertised name
 }
 
 fn adapter(objs: &Objects) -> Option<OwnedObjectPath> {
@@ -93,17 +92,7 @@ fn call(bus: &Connection, path: &str, iface: &str, method: &str) -> zbus::Result
     bus.call_method(Some(BLUEZ), path, Some(iface), method, &()).map(|_| ())
 }
 
-fn set_bool(bus: &Connection, path: &str, iface: &str, name: &str, on: bool) {
-    let _ = bus.call_method(
-        Some(BLUEZ),
-        path,
-        Some(PROPS),
-        "Set",
-        &(iface, name, zbus::zvariant::Value::from(on)),
-    );
-}
-
-/// BleStartPairing: scan for a ring, pair it, report BlePairResult, then keep it connected.
+/// BleStartPairing: scan for a ring, report BlePairResult, then keep it connected.
 pub fn start_pairing(scan_secs: u64) {
     std::thread::spawn(move || {
         let found = scan(Duration::from_secs(scan_secs.clamp(5, 120))).unwrap_or_else(|e| {
@@ -139,28 +128,31 @@ fn scan(timeout: Duration) -> zbus::Result<Option<(String, String)>> {
     );
     call(&bus, hci.as_str(), "org.bluez.Adapter1", "StartDiscovery")?;
     let deadline = Instant::now() + timeout;
-    let mut found = None;
-    while found.is_none() && Instant::now() < deadline {
+    let mut rings = Vec::new();
+    while rings.is_empty() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(500));
-        found = objects(&bus)?.iter().find(|(_, i)| is_ring(i)).map(|(p, i)| {
-            (
-                p.clone(),
+        rings = objects(&bus)?
+            .values()
+            .filter(|i| is_ring(i))
+            .map(|i| {
                 (
                     str_prop(i, DEVICE, "Address").unwrap_or_default(),
                     str_prop(i, DEVICE, "Name").unwrap_or_else(|| "MicRing".into()),
-                ),
-            )
-        });
+                )
+            })
+            .collect();
     }
     let _ = call(&bus, hci.as_str(), "org.bluez.Adapter1", "StopDiscovery");
-    let Some((path, (address, name))) = found else {
+    // No Pair/Trusted: the GATT notifications need neither (CoreBluetooth on macOS does not bond either),
+    // so the system Bluetooth trust list stays untouched.
+    if rings.len() > 1 {
+        log(&format!(
+            "{} rings in range, not guessing; pair with only one nearby",
+            rings.len()
+        ));
         return Ok(None);
-    };
-    if let Err(e) = call(&bus, path.as_str(), DEVICE, "Pair") {
-        log(&format!("pair: {e} (continuing; the ring may not need bonding)"));
     }
-    set_bool(&bus, path.as_str(), DEVICE, "Trusted", true);
-    Ok(Some((address, name)))
+    Ok(rings.pop())
 }
 
 /// BleSetPairedDevice: `Some(id)` keeps that ring connected, `None` forgets it.
