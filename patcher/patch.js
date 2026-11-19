@@ -178,6 +178,19 @@ const patches = [
     re: /([a-zA-Z$]+\.H8)(&&[a-zA-Z$]+\.on\("click",\(\)=>[a-zA-Z$]+\("left_click_open"\)\))/,
     to: (_, h, rest) => `(${h}||${LINUX})${rest}`,
   },
+  // Meeting auto-detect: the helper reports microphone holders from PipeWire/PulseAudio, as Windows does.
+  // Only the master gate and the mic-holder monitor are opened; tab-strip/speaker features stay off (they need UI automation).
+  {
+    name: "meeting auto-detect: allow detection on Linux",
+    re: /(=\(\)=>\()("darwin"===process\.platform\|\|"win32"===process\.platform)(\)&&!\(0,[a-zA-Z$]+\.kJ\)\(\)&&"unsupported"!==)/,
+    to: (_, a, gate, b) => `${a}${gate}||${LINUX}${b}`,
+  },
+  {
+    name: "meeting auto-detect: subscribe/unsubscribe the microphone holders monitor on Linux",
+    count: 2,
+    re: /"darwin"!==process\.platform&&"win32"!==process\.platform(?=\|\|(?:null===[a-zA-Z$]+\|\|![a-zA-Z$]+\.isEnabled\(\)\)return;const [a-zA-Z$]+=\+\+|\(0,[a-zA-Z$]+\.setMicrophoneHoldersMonitor\)))/,
+    to: (gate) => `${gate}&&!(${LINUX})`,
+  },
   // Linux has no setIgnoreMouseEvents({forward}), so the floating bar is clickable only through the cursor poll
   // (ignoreMouseEventsWhenNotInAlphaRegion); poll faster than the default 400ms so the bar reacts when the pointer arrives.
   {

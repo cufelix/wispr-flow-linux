@@ -4,6 +4,7 @@
 
 mod a11y;
 mod apps;
+mod ble;
 mod input;
 mod ipc;
 mod keys;
@@ -134,6 +135,14 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "SetMicrophoneHoldersMonitor" => {
             let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
             mic::set_monitor(p["enabled"].as_bool().unwrap_or(false), p["cadenceMs"].as_u64())
+        }
+        "BleStartPairing" => {
+            ble::start_pairing(req["BleStartPairing"]["payload"]["scanDurationSeconds"].as_u64().unwrap_or(30));
+            json!({ "ACK": true })
+        }
+        "BleSetPairedDevice" => {
+            ble::set_paired(req["BleSetPairedDevice"]["payload"]["deviceId"].as_str().map(str::to_owned));
+            json!({ "ACK": true })
         }
         "DictationStop" => { ipc::respond(&uuid, json!({ "ACK": true })); media::dictation_stop(); return; }
         "GetTextBoxInfo" => json!({ "TextBoxInfo": text_box_info(out.map(|o| o.lock().unwrap().active_app())) }),

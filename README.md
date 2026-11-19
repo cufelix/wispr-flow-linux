@@ -55,6 +55,15 @@ echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d
 sudo udevadm control --reload && sudo udevadm trigger   # then log out and back in
 ```
 
+### Jabra headsets
+
+Wear detection talks to the headset over hidraw. Allow your desktop session to use Jabra devices, then replug the headset:
+
+```bash
+echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-wispr-flow-jabra.rules
+sudo udevadm control --reload
+```
+
 ## What works
 
 | Feature | Linux |
@@ -70,7 +79,9 @@ sudo udevadm control --reload && sudo udevadm trigger   # then log out and back 
 | Terminal-aware formatting (GNOME Terminal, Konsole, Ptyxis, kitty, foot...) | ✅ |
 | Tray icon click, Open sound settings | ✅ |
 | Reading text around the cursor for better context | ✅ in apps that support Linux accessibility (AT-SPI), tested with GTK. Password fields are never read |
-| Meeting detection, Wispr's BLE ring and headset buttons | ❌ Wispr turns these on only on macOS and Windows |
+| Meeting auto-detect (Zoom, Teams, Meet... start using the mic) | ✅ the helper reports which apps hold the microphone (PipeWire/PulseAudio), as on Windows. Speaker names and tab tracking stay off |
+| Wispr's BLE MicRing | ✅ paired over BlueZ; the helper forwards the ring's audio and buttons. Wispr shows it only for accounts with the `ble-mic-ring` flag. Untested without the hardware |
+| Jabra headset wear detection | ✅ via Wispr's bundled Linux Jabra connector (x86_64). Give your user access to the headset once (see [Jabra headsets](#jabra-headsets)) |
 | Automatic updates | ✅ checked every 12 h, installed on restart |
 
 ## How it works
@@ -82,11 +93,17 @@ Wispr Flow (Electron, original UI) ──stdin──▶ wispr-flow-linux-helper
 
 - **Message format**: JSON, with `+` escaped as `+1` and `|` as `+2`; each message ends with `|`.
 - **Key codes**: key presses are sent as Windows virtual-key codes, because Wispr uses those on every platform except macOS.
-- **Requests**: the helper answers `IsReady`, `PasteText`, `GetActiveAppInfo` and similar requests. Requests that only make sense on macOS or Windows get a plain `ACK`.
+- **Requests**: the helper answers `IsReady`, `PasteText`, `GetActiveAppInfo` and similar requests. `BleStartPairing`/`BleSetPairedDevice` are bridged to BlueZ for the MicRing. Requests that only make sense on macOS or Windows get a plain `ACK`.
 
 ## Offline mode (no subscription)
 
-`offline/` contains a separate, fully local alternative. Hold Right Ctrl, speak, and release. Transcription runs on your GPU with whisper.cpp (`large-v3-turbo`) via Vulkan. Install it with `offline/install.sh`.
+`offline/` contains a separate, fully local alternative. Hold Right Ctrl, speak, and release. Transcription runs on your GPU with whisper.cpp (`large-v3-turbo`) via Vulkan. Install it with one line (apt, dnf or pacman; installs Rust if missing and downloads the ~550 MB model):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/offline/install.sh | bash
+```
+
+Pass options after `-s --`, e.g. `| bash -s -- --lang cs`. From a clone: `offline/install.sh`.
 
 ## Disclaimer
 

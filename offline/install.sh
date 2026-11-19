@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
 # Build, install to ~/.local/bin, fetch model, enable autostart, start now.
 # Usage: ./install.sh [extra wisperflow-linux args, e.g. --lang cs --key Super_R]
+#    or: curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/offline/install.sh | bash -s -- --lang cs
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-if ! command -v xdotool >/dev/null || ! dpkg -s libasound2-dev cmake clang libvulkan-dev glslc >/dev/null 2>&1; then
-  sudo apt-get install -y xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers
+# Use the local checkout only when run as a file; piped (curl | bash) fetches the repo.
+if [ -f "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/Cargo.toml" ]; then
+  cd "$(dirname "${BASH_SOURCE[0]}")/.."
+else
+  WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+  curl -fsSL https://github.com/cufelix/wispr-flow-linux/archive/refs/heads/main.tar.gz | tar -xz -C "$WORK" --strip-components=1
+  cd "$WORK"
+fi
+
+if command -v apt-get >/dev/null; then
+  dpkg -s xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null 2>&1 ||
+    sudo apt-get install -y xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl
+elif command -v dnf >/dev/null; then
+  sudo dnf install -y xdotool cmake clang clang-devel alsa-lib-devel vulkan-loader-devel glslc mesa-vulkan-drivers curl
+elif command -v pacman >/dev/null; then
+  sudo pacman -S --needed --noconfirm xdotool cmake clang alsa-lib vulkan-icd-loader vulkan-headers shaderc curl
+else
+  echo "Unknown package manager: install xdotool, cmake, clang, ALSA and Vulkan dev headers, glslc." >&2
+fi
+
+if ! command -v cargo >/dev/null; then
+  [ -x "$HOME/.cargo/bin/cargo" ] || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+  export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
 cargo build --release -p wisperflow-offline

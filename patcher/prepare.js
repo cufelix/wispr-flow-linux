@@ -55,6 +55,9 @@ const app = path.join(outRes, "app");
 fs.rmSync(app, { recursive: true, force: true });
 extractAsar(path.join(srcRes, "app.asar"), app);
 console.log("extracted app.asar");
+// Jabra headset SDK (wear detection) spawns its bundled Linux Device Connector; the macOS copy is not executable.
+const jabra = path.join(app, ".webpack", "main", "native_modules", "jabra-device-connector", "linux", "jabra-device-connector");
+if (fs.existsSync(jabra)) fs.chmodSync(jabra, 0o755);
 
 const mainJs = path.join(app, ".webpack", "main", "index.js");
 fs.writeFileSync(mainJs, applyPatches(fs.readFileSync(mainJs, "utf8")));
