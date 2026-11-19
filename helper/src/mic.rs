@@ -33,6 +33,22 @@ fn is_ours(pid: u32) -> bool {
     false
 }
 
+/// Wispr recognizes meeting apps and browsers by macOS bundle id or Windows exe name (it appends ".exe" to a bare
+/// name). Linux binaries whose name differs from the Windows one are renamed to it; the rest pass through.
+pub fn wispr_app_id(binary: &str) -> &str {
+    match binary.to_lowercase().as_str() {
+        "chromium" | "chromium-browser" | "google-chrome" | "google-chrome-stable" => "chrome",
+        "microsoft-edge" | "microsoft-edge-stable" => "msedge",
+        "vivaldi-bin" => "vivaldi",
+        "brave-browser" => "brave",
+        "firefox-bin" | "firefox-esr" => "firefox",
+        "zen-bin" => "zen",
+        "teams-for-linux" => "teams",
+        "whatsapp-for-linux" | "wasistlos" => "whatsapp",
+        _ => binary,
+    }
+}
+
 /// Pure part, testable: source-outputs JSON + monitor source indexes -> holders.
 fn parse_holders(json: &str, monitor_sources: &[u64]) -> Vec<Value> {
     let Ok(Value::Array(outputs)) = serde_json::from_str::<Value>(json) else { return vec![] };
@@ -49,7 +65,7 @@ fn parse_holders(json: &str, monitor_sources: &[u64]) -> Vec<Value> {
             continue;
         }
         let mut h = json!({ "name": name, "source": "process_api" });
-        if !s("application.process.binary").is_empty() { h["bundleIdOrExePath"] = json!(s("application.process.binary")); }
+        if !s("application.process.binary").is_empty() { h["bundleIdOrExePath"] = json!(wispr_app_id(s("application.process.binary"))); }
         if let Some(pid) = pid { h["processId"] = json!(pid); }
         if !holders.contains(&h) { holders.push(h); }
     }
@@ -118,6 +134,8 @@ mod tests {
         let h = parse_holders(j, &[58]);
         assert_eq!(h, vec![json!({"name":"parecord","source":"process_api","bundleIdOrExePath":"pacat","processId":1})]);
         assert!(parse_holders("garbage", &[]).is_empty());
+        assert_eq!((wispr_app_id("chromium"), wispr_app_id("vivaldi-bin"), wispr_app_id("teams-for-linux")), ("chrome", "vivaldi", "teams"));
+        assert_eq!(wispr_app_id("zoom"), "zoom");
     }
 
     #[test]

@@ -129,10 +129,8 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "IsReady" => json!({ "ACK": true, "TapState": { "payload": { "tapEnabled": true } },
             "HelperLaunchTiming": { "helperMainEntryMs": started.elapsed().as_secs_f64() * 1000.0 } }),
         "GetAccessibilityStatus" => json!({ "AccessibilityStatus": { "payload": { "status": true } } }),
-        "GetActiveAppInfo" => { let a = app(); json!({ "ActiveAppInfo": { "payload": {
-            "appName": a.class, "bundleId": a.class.to_lowercase(), "url": "", "windowTitle": a.title } } }) }
-        "GetAppInfo" => { let a = app(); json!({ "AppInfo": { "payload": {
-            "appName": a.class, "bundleId": a.class.to_lowercase(), "url": "" } } }) }
+        "GetActiveAppInfo" => json!({ "ActiveAppInfo": { "payload": app_payload(&app()) } }),
+        "GetAppInfo" => json!({ "AppInfo": { "payload": app_payload(&app()) } }),
         "GetHardwareInfo" => json!({ "HardwareInfo": { "payload": { "hasAppleFnKey": false, "isClamshellMode": false } } }),
         "GetRunningApps" => apps::running(),
         "GetDeviceInfo" => json!({ "DeviceInfo": { "payload": { "status": "missing" } } }),
@@ -157,8 +155,7 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
             ipc::request("TextBoxInfo", text_box_info(out.map(|o| o.lock().unwrap().active_app())));
             let a = app();
             if !a.class.is_empty() {
-                ipc::request("AppInfoUpdate", json!({ "payload": {
-                    "appName": a.class, "bundleId": a.class.to_lowercase(), "url": "", "windowTitle": a.title } }));
+                ipc::request("AppInfoUpdate", json!({ "payload": app_payload(&a) }));
             }
             return;
         }
@@ -245,6 +242,19 @@ fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
 }
 
 /// Wayland (or X11 without a class): fall back to the focused AT-SPI application's name.
+const BROWSERS: [&str; 7] = ["chrome", "msedge", "vivaldi", "brave", "firefox", "opera", "zen"];
+
+/// App info as Wispr expects it. `bundleId` uses the Windows exe name for apps Wispr knows (chrome, teams...);
+/// `url` is the visible page of a focused browser, read over AT-SPI only when that focus is in this window.
+fn app_payload(a: &output::AppInfo) -> Value {
+    let id = mic::wispr_app_id(&a.class.to_lowercase()).to_string();
+    let url = (BROWSERS.contains(&id.as_str()) && a.pid.is_some() && a.pid == a11y::focused_pid())
+        .then(a11y::active_url)
+        .flatten()
+        .unwrap_or_default();
+    json!({ "appName": a.class, "bundleId": id, "url": url, "windowTitle": a.title })
+}
+
 fn with_a11y_name(mut a: output::AppInfo) -> output::AppInfo {
     if a.class.is_empty() {
         a.class = a11y::focused_app_name().unwrap_or_default();
@@ -255,14 +265,18 @@ fn with_a11y_name(mut a: output::AppInfo) -> output::AppInfo {
 /// Tells Electron which app is focused (Wispr uses it for per-app style and context).
 fn watch_active_app(out: Arc<Mutex<output::Output>>) {
     std::thread::spawn(move || {
-        let mut last = output::AppInfo::default();
+        let mut last = Value::Null;
         loop {
             std::thread::sleep(Duration::from_millis(500));
             let now = with_a11y_name(out.lock().unwrap().active_app());
-            if now.class != last.class && !now.class.is_empty() {
-                ipc::request("AppInfoUpdate", json!({ "payload": {
-                    "appName": now.class, "bundleId": now.class.to_lowercase(), "url": "", "windowTitle": now.title } }));
-                last = now;
+            if now.class.is_empty() {
+                continue;
+            }
+            let payload = app_payload(&now);
+            // a new app, or a new page in the same browser (tab switch, joining a meeting)
+            if payload["bundleId"] != last["bundleId"] || payload["url"] != last["url"] {
+                ipc::request("AppInfoUpdate", json!({ "payload": payload.clone() }));
+                last = payload;
             }
         }
     });

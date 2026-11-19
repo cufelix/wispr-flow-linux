@@ -151,6 +151,55 @@ pub fn focused_app_name() -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+const ROLE_DOCUMENT_WEB: u32 = 95;
+const STATE_ACTIVE: u32 = 1;
+const STATE_SHOWING: u32 = 25;
+const URL_NODE_LIMIT: usize = 300;
+
+fn state_bits(t: &Target) -> Option<u32> {
+    let s: Vec<u32> = call(t, ACCESSIBLE, "GetState", &())?.body().deserialize().ok()?;
+    s.first().copied()
+}
+
+fn children(t: &Target) -> Vec<Target> {
+    call(t, ACCESSIBLE, "GetChildren", &())
+        .and_then(|m| m.body().deserialize::<Vec<(String, zbus::zvariant::OwnedObjectPath)>>().ok())
+        .map(|v| v.into_iter().map(|(bus, path)| (bus, path.to_string())).collect())
+        .unwrap_or_default()
+}
+
+/// URL of the visible page in the focused browser window (Firefox; Chromium once its accessibility is on).
+/// Wispr reads the meeting service (Meet, Teams, Zoom web) from it, as it does from the address bar on Windows.
+pub fn active_url() -> Option<String> {
+    let (bus, _) = focus()?;
+    let deadline = Instant::now() + BUDGET;
+    let root = (bus, "/org/a11y/atspi/accessible/root".to_string());
+    let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
+    let (mut stack, mut seen) = (vec![frame], 0);
+    while let Some(node) = stack.pop() {
+        seen += 1;
+        if seen > URL_NODE_LIMIT || Instant::now() > deadline {
+            return None;
+        }
+        if state_bits(&node).is_none_or(|s| s & (1 << STATE_SHOWING) == 0) {
+            continue; // hidden tabs and their subtrees
+        }
+        let role: Option<u32> = call(&node, ACCESSIBLE, "GetRole", &()).and_then(|m| m.body().deserialize().ok());
+        if role == Some(ROLE_DOCUMENT_WEB) {
+            for key in ["DocURL", "URI"] {
+                let url: Option<String> = call(&node, "org.a11y.atspi.Document", "GetAttributeValue", &(key,))
+                    .and_then(|m| m.body().deserialize().ok());
+                if let Some(url) = url.filter(|u| u.starts_with("http")) {
+                    return Some(url);
+                }
+            }
+            continue; // never descend into page content
+        }
+        stack.extend(children(&node).into_iter().rev());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
