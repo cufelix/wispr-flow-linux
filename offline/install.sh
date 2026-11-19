@@ -17,7 +17,7 @@ fi
 
 if command -v apt-get >/dev/null; then
   dpkg -s build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null 2>&1 ||
-    { sudo apt-get update -qq </dev/null; sudo apt-get install -y build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl </dev/null; }
+    { sudo apt-get update -qq </dev/null; sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl </dev/null; }
 elif command -v dnf >/dev/null; then
   sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config xdotool cmake clang clang-devel alsa-lib-devel vulkan-loader-devel glslc mesa-vulkan-drivers curl </dev/null
 elif command -v pacman >/dev/null; then
