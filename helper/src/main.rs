@@ -48,6 +48,10 @@ fn main() {
                 (None, Some(btn)) => (btn, "mouse"),
                 _ => return,
             };
+            if input_type == "keyboard" {
+                let mut down = KEYS_DOWN.lock().unwrap();
+                if pressed { down.insert(key); } else { down.remove(&key); }
+            }
             let prefix = if input_type == "mouse" { "mouse_event" } else { "key_event" };
             let event = format!("{prefix}_{}", if pressed { "press" } else { "release" });
             let i = index.fetch_add(1, Ordering::SeqCst) + 1;
@@ -121,6 +125,15 @@ fn text_box_info(x11: Option<output::AppInfo>) -> Value {
         "beforeText": "", "afterText": "", "contents": "", "selectedText": "" } })
 }
 
+/// Keyboard keys (Windows VK codes) that are physically down right now.
+static KEYS_DOWN: Mutex<std::collections::BTreeSet<u16>> = Mutex::new(std::collections::BTreeSet::new());
+
+/// Of the keys Wispr believes are held, those that are not: it drops them, so a missed release
+/// cannot leave a shortcut (and a dictation) stuck.
+fn stale_keys(asked: &Value, down: &std::collections::BTreeSet<u16>) -> Vec<u64> {
+    asked.as_array().into_iter().flatten().filter_map(Value::as_u64).filter(|k| !down.contains(&(*k as u16))).collect()
+}
+
 fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster: &Sender<Job>, started: Instant) {
     let uuid = req["uuid"].as_str().unwrap_or_default().to_string();
     let Some(kind) = ipc::request_kind(req) else { return };
@@ -186,6 +199,8 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
             media::shutdown();
             std::process::exit(0);
         }
+        "CheckStaleKeys" => json!({ "StaleKeysResponse": { "payload": {
+            "staleKeys": stale_keys(&req[kind]["payload"]["keycodes"], &KEYS_DOWN.lock().unwrap()) } } }),
         // Everything else is macOS/Windows integration (meetings, BLE, accessibility trees...): acknowledge.
         _ => json!({ "ACK": true }),
     };
@@ -279,4 +294,17 @@ fn watch_active_app(out: Arc<Mutex<output::Output>>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_keys_that_are_no_longer_held() {
+        let down = [162u16, 32].into_iter().collect();
+        assert_eq!(stale_keys(&json!([162, 32, 91]), &down), vec![91]);
+        assert_eq!(stale_keys(&json!([162]), &down), Vec::<u64>::new());
+        assert_eq!(stale_keys(&Value::Null, &down), Vec::<u64>::new());
+    }
 }

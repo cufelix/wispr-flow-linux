@@ -74,7 +74,7 @@ sudo udevadm control --reload
 | Per-app context (name of the focused app) | ✅ X11; on Wayland for apps that support accessibility |
 | Editing selected text (command mode, Polish) | ✅ the selection is copied with Ctrl+C and your clipboard is restored, as Wispr does on Windows |
 | Wispr's key commands (press Enter, undo, select all, move the cursor) | ✅ |
-| Default shortcuts (hands-free, Lens, paste/copy last text, Polish, meeting recorder) | ✅ the Windows defaults; shortcuts saved with Fn/Option/Cmd keys are replaced on start |
+| Default shortcuts (hands-free, Lens, paste/copy last text, Polish, meeting recorder) | ✅ the Windows defaults; shortcuts saved with Fn/Option/Cmd keys are replaced on start. Letter keys count by their position on a US keyboard: on QWERTZ, the shortcut shown as Z is the key labelled Y |
 | Launch at login | ✅ the toggle adds/removes `~/.config/autostart/wispr-flow.desktop` and shows its real state |
 | Terminal-aware formatting (GNOME Terminal, Konsole, Ptyxis, kitty, foot...) | ✅ |
 | Tray icon click, Open sound settings | ✅ |
