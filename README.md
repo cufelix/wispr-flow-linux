@@ -78,6 +78,7 @@ sudo udevadm control --reload
 | Launch at login | ✅ the toggle adds/removes `~/.config/autostart/wispr-flow.desktop` and shows its real state |
 | Terminal-aware formatting (GNOME Terminal, Konsole, Ptyxis, kitty, foot...) | ✅ |
 | Tray icon click, Open sound settings | ✅ |
+| Clicking the floating bar and its popups (notifications, meeting prompts) | ✅ X11: the helper feeds the real pointer position to the app, because Electron's own value freezes while the bar is click-through. Not on Wayland |
 | Reading text around the cursor for better context | ✅ in apps that support Linux accessibility (AT-SPI), tested with GTK. Password fields are never read |
 | Meeting auto-detect (Zoom, Teams, Meet... start using the mic) | ✅ the helper reports which apps hold the microphone (PipeWire/PulseAudio), as on Windows. Speaker names and tab tracking stay off |
 | Wispr's BLE MicRing | ✅ paired over BlueZ; the helper forwards the ring's audio and buttons. Wispr shows it only for accounts with the `ble-mic-ring` flag. Untested without the hardware |

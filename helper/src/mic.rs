@@ -7,6 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Electron drops any observation whose sequence number is not newer than the last one it saw
+/// (per monitor generation), for polled snapshots and pushed changes alike: one shared counter.
+static SEQ: AtomicU64 = AtomicU64::new(0);
+static MONITORING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn ppid_of(pid: u32) -> Option<u32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -68,7 +72,8 @@ pub fn holders() -> Vec<Value> {
     }
 }
 
-fn payload(holders: Vec<Value>, generation: u64, seq: u64, listening: bool) -> Value {
+fn payload(holders: Vec<Value>, generation: u64) -> Value {
+    let (seq, listening) = (SEQ.fetch_add(1, Ordering::SeqCst) + 1, MONITORING.load(Ordering::SeqCst));
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
     json!({ "deviceInUse": !holders.is_empty(), "holders": holders, "detectionMethod": "process_api",
         "observedAtMs": now, "listenerActive": listening, "monitorGeneration": generation, "observationSeq": seq })
@@ -76,21 +81,21 @@ fn payload(holders: Vec<Value>, generation: u64, seq: u64, listening: bool) -> V
 
 /// Reply body for GetMicrophoneHolders.
 pub fn snapshot() -> Value {
-    json!({ "MicrophoneHolders": { "payload": payload(holders(), GENERATION.load(Ordering::SeqCst), 0, false) } })
+    json!({ "MicrophoneHolders": { "payload": payload(holders(), GENERATION.load(Ordering::SeqCst)) } })
 }
 
 /// SetMicrophoneHoldersMonitor: poll while enabled, push MicrophoneHoldersChanged when the set changes.
 pub fn set_monitor(enabled: bool, cadence_ms: Option<u64>) -> Value {
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1; // also stops any previous poller
+    MONITORING.store(enabled, Ordering::SeqCst);
     if enabled {
         let cadence = Duration::from_millis(cadence_ms.unwrap_or(2000).max(1000));
         std::thread::spawn(move || {
-            let (mut last, mut seq): (Option<Vec<Value>>, u64) = (None, 0);
+            let mut last: Option<Vec<Value>> = None;
             while GENERATION.load(Ordering::SeqCst) == generation {
                 let now = holders();
                 if last.as_ref() != Some(&now) {
-                    seq += 1;
-                    ipc::request("MicrophoneHoldersChanged", json!({ "payload": payload(now.clone(), generation, seq, true) }));
+                    ipc::request("MicrophoneHoldersChanged", json!({ "payload": payload(now.clone(), generation) }));
                     last = Some(now);
                 }
                 std::thread::sleep(cadence);
@@ -113,5 +118,13 @@ mod tests {
         let h = parse_holders(j, &[58]);
         assert_eq!(h, vec![json!({"name":"parecord","source":"process_api","bundleIdOrExePath":"pacat","processId":1})]);
         assert!(parse_holders("garbage", &[]).is_empty());
+    }
+
+    #[test]
+    fn observation_seq_always_increases() {
+        // Electron ignores a snapshot whose seq is not above the previous one (this broke meeting detection)
+        let seq = |v: Value| v["observationSeq"].as_u64().unwrap();
+        let (a, b) = (seq(payload(vec![], 1)), seq(payload(vec![], 1)));
+        assert!(a >= 1 && b > a);
     }
 }

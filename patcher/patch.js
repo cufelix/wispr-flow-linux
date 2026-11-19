@@ -58,6 +58,36 @@ function migrateLinuxShortcuts(app, setPrefs, shortcutsModule, sendHelperRequest
   if (app.helper?.ready) sendHelperRequest("UpdateShortcuts");
 }
 
+// Electron's screen.getCursorScreenPoint() on X11 only updates while the pointer is over one of the app's windows
+// that accepts input. The floating bar ignores input until its hit-test poll sees the pointer on it, so that poll
+// read a frozen position and the bar and its popups were never clickable. Read the real position from the helper.
+function linuxCursorTracker() {
+  const { app, screen } = require("electron"), { spawn } = require("child_process");
+  if (process.env.XDG_SESSION_TYPE === "wayland" || !process.env.DISPLAY) return; // X11 only: Wayland hides the global pointer
+  const original = screen.getCursorScreenPoint.bind(screen);
+  let point = null, child = null, quitting = false;
+  screen.getCursorScreenPoint = () => point ?? original();
+  const toDip = (p) => {
+    if (screen.screenToDipPoint) return screen.screenToDipPoint(p);
+    const scale = screen.getPrimaryDisplay().scaleFactor || 1;
+    return { x: Math.round(p.x / scale), y: Math.round(p.y / scale) };
+  };
+  const start = () => {
+    let buffer = "";
+    child = spawn(process.env.WISPR_LINUX_HELPER || "wispr-flow-linux-helper", ["--cursor"], { stdio: ["ignore", "pipe", "ignore"] });
+    child.stdout.on("data", (chunk) => {
+      const lines = (buffer + chunk).split("\n");
+      buffer = lines.pop();
+      const [x, y] = (lines.pop() ?? "").split(" ").map(Number);
+      if (Number.isFinite(x) && Number.isFinite(y)) point = toDip({ x, y });
+    });
+    child.on("error", () => {}); // "exit" follows; without the tracker Electron's own (frozen) value is used
+    child.on("exit", () => { point = null; if (!quitting) setTimeout(start, 2000); });
+  };
+  app.on("before-quit", () => { quitting = true; child?.kill(); });
+  start();
+}
+
 // Name the webpack module alias bound to module `id` (e.g. `ri` for `ri=n(69583)`), nearest one before `offset`.
 function moduleAlias(src, offset, id) {
   const hits = [...src.slice(0, offset).matchAll(new RegExp(`[,;\\s]([a-zA-Z$]+)=n\\(${id}\\)`, "g"))];
@@ -120,12 +150,12 @@ const patches = [
   },
   shortcutDefaults(8, LINUX),
   {
-    name: "migrate saved shortcuts that use macOS-only keycode -1 (once the prefs are loaded)",
+    name: "Linux startup: track the real cursor position, migrate saved shortcuts that use macOS-only keycode -1",
     re: /(\(0,[a-zA-Z$]+\.e6\)\(\)),(?=[a-zA-Z$]+\.[a-zA-Z$]+\.startCheckingForUpdates\(\))/,
     to: (_, call, offset, src) => {
       const alias = (id) => moduleAlias(src, offset, id);
       const args = `${alias(MODULE.prefsStore)}.RA,${alias(MODULE.prefsSetter)}.xB,${alias(MODULE.shortcuts)},${alias(MODULE.helper)}.sendHelperRequest`;
-      return `${call},${LINUX}&&(${migrateLinuxShortcuts})(${args}),`;
+      return `${call},${LINUX}&&((${linuxCursorTracker})(),(${migrateLinuxShortcuts})(${args})),`;
     },
   },
   {

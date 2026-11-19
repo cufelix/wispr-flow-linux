@@ -5,6 +5,7 @@
 mod a11y;
 mod apps;
 mod ble;
+mod cursor;
 mod input;
 mod ipc;
 mod keys;
@@ -24,6 +25,10 @@ fn log(msg: &str) {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--cursor") {
+        if let Err(e) = cursor::run() { log(&format!("cursor tracker stopped: {e:#}")); }
+        return;
+    }
     ipc::init();
     let started = Instant::now();
     let wayland = std::env::var("XDG_SESSION_TYPE").is_ok_and(|s| s == "wayland")
