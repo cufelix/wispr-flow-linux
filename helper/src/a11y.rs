@@ -178,10 +178,13 @@ pub fn active_url(pid: u32) -> Option<String> {
     let deadline = Instant::now() + BUDGET;
     let registry = ("org.a11y.atspi.Registry".to_string(), "/org/a11y/atspi/accessible/root".to_string());
     let app = children(&registry).into_iter().find(|(bus, _)| bus_pid(bus) == Some(pid))?;
-    let frames = children(&app);
-    let active: Vec<Target> =
-        frames.iter().filter(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0)).cloned().collect();
-    let (mut stack, mut seen) = (if active.is_empty() { frames } else { active }, 0);
+    // only the active window, and never a private one: the URL goes to Wispr's servers
+    let frame = children(&app).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
+    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
+    if is_private_window(&title) {
+        return None;
+    }
+    let (mut stack, mut seen) = (vec![frame], 0);
     while let Some(node) = stack.pop() {
         seen += 1;
         if seen > URL_NODE_LIMIT || Instant::now() > deadline {
@@ -206,9 +209,21 @@ pub fn active_url(pid: u32) -> Option<String> {
     None
 }
 
+/// Firefox "… — Private Browsing", Chrome/Chromium "… (Incognito)", Brave "… Private".
+fn is_private_window(title: &str) -> bool {
+    ["Private Browsing", "Incognito", "Private"].iter().any(|m| title.contains(m))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_private_windows() {
+        assert!(is_private_window("Meet — Mozilla Firefox Private Browsing"));
+        assert!(is_private_window("New Tab - Google Chrome (Incognito)"));
+        assert!(!is_private_window("Meet - abc-defg-hij - Google Chrome"));
+    }
 
     #[test]
     fn splits_on_chars_not_bytes() {
