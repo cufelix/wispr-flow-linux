@@ -14,14 +14,14 @@ else
 fi
 
 if command -v apt-get >/dev/null; then
-  dpkg -s xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null 2>&1 ||
-    sudo apt-get install -y xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl
+  dpkg -s build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null 2>&1 ||
+    { sudo apt-get update -qq; sudo apt-get install -y build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl; }
 elif command -v dnf >/dev/null; then
-  sudo dnf install -y xdotool cmake clang clang-devel alsa-lib-devel vulkan-loader-devel glslc mesa-vulkan-drivers curl
+  sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config xdotool cmake clang clang-devel alsa-lib-devel vulkan-loader-devel glslc mesa-vulkan-drivers curl
 elif command -v pacman >/dev/null; then
-  sudo pacman -S --needed --noconfirm xdotool cmake clang alsa-lib vulkan-icd-loader vulkan-headers shaderc curl
+  sudo pacman -S --needed --noconfirm base-devel xdotool cmake clang alsa-lib vulkan-icd-loader vulkan-headers shaderc curl
 else
-  echo "Unknown package manager: install xdotool, cmake, clang, ALSA and Vulkan dev headers, glslc." >&2
+  echo "Unknown package manager: install a C/C++ toolchain, pkg-config, xdotool, cmake, clang, ALSA and Vulkan dev headers, glslc." >&2
 fi
 
 if ! command -v cargo >/dev/null; then
