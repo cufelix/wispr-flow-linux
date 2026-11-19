@@ -255,8 +255,20 @@ function applyPatches(src, list = patches) {
   return src;
 }
 
+// Chromium's default audio processing (echo cancellation, noise suppression) silences the Linux loopback stream
+// completely; the hub window captures the meeting's system audio, so ask for the raw stream there.
+const rendererExtra = {
+  hub: [{
+    name: "meeting recorder: raw system audio stream on Linux",
+    count: 2,
+    re: /getDisplayMedia\(\{audio:!0,video:!1\}\)/,
+    to: () => `getDisplayMedia({audio:${LINUX_RENDERER}?{echoCancellation:!1,noiseSuppression:!1,autoGainControl:!1}:!0,video:!1})`,
+  }],
+};
+
 function applyRendererPatches(src, bundle) {
-  return applyPatches(src, [shortcutDefaults(rendererShortcutDefaults[bundle], LINUX_RENDERER)].map((p) => ({ ...p, name: `${p.name} (${bundle} renderer)` })));
+  const list = [shortcutDefaults(rendererShortcutDefaults[bundle], LINUX_RENDERER), ...(rendererExtra[bundle] ?? [])];
+  return applyPatches(src, list.map((p) => ({ ...p, name: `${p.name} (${bundle} renderer)` })));
 }
 
 module.exports = { applyPatches, applyRendererPatches, rendererBundles: Object.keys(rendererShortcutDefaults) };
