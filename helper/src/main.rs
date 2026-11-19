@@ -248,7 +248,9 @@ const BROWSERS: [&str; 7] = ["chrome", "msedge", "vivaldi", "brave", "firefox", 
 /// `url` is the visible page of the active browser window, read over AT-SPI.
 fn app_payload(a: &output::AppInfo) -> Value {
     let id = mic::wispr_app_id(&a.class.to_lowercase()).to_string();
-    let url = a.pid.filter(|_| BROWSERS.contains(&id.as_str())).and_then(a11y::active_url).unwrap_or_default();
+    let browser = BROWSERS.contains(&id.as_str());
+    let url = a.pid.filter(|_| browser).and_then(a11y::active_url);
+    let url = url.or_else(|| browser.then(|| a11y::meeting_url_from_title(&a.title)).flatten()).unwrap_or_default();
     json!({ "appName": a.class, "bundleId": id, "url": url, "windowTitle": a.title })
 }
 

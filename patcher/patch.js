@@ -221,6 +221,13 @@ const patches = [
     re: /"darwin"!==process\.platform&&"win32"!==process\.platform(?=\|\|(?:null===[a-zA-Z$]+\|\|![a-zA-Z$]+\.isEnabled\(\)\)return;const [a-zA-Z$]+=\+\+|\(0,[a-zA-Z$]+\.setMicrophoneHoldersMonitor\)))/,
     to: (gate) => `${gate}&&!(${LINUX})`,
   },
+  // Wispr skips system audio on Linux ("no system loopback path"), so a meeting recording fails with "Could not capture
+  // system audio" and has no other participants. Electron does loop back the default output's PulseAudio/PipeWire monitor.
+  {
+    name: "meeting recorder: capture system audio on Linux like on Windows",
+    re: /if\("linux"===process\.platform\)return [a-zA-Z$]+\(\)\.info\("\[MeetingDisplayMedia\] Skipping handler install on Linux[^"]*"\),void\([a-zA-Z$]+=!0\);([^;]{0,120}\{if\()("win32"===process\.platform)(\)return void [a-zA-Z$]+\(\{audio:"loopback"\}\))/,
+    to: (_, a, gate, b) => `${a}${gate}||${LINUX}${b}`,
+  },
   // Linux has no setIgnoreMouseEvents({forward}), so the floating bar is clickable only through the cursor poll
   // (ignoreMouseEventsWhenNotInAlphaRegion); poll faster than the default 400ms so the bar reacts when the pointer arrives.
   {

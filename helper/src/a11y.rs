@@ -209,6 +209,25 @@ pub fn active_url(pid: u32) -> Option<String> {
     None
 }
 
+/// Meeting URL guessed from a browser window title, for browsers that hide their page from AT-SPI (Chrome without
+/// --force-renderer-accessibility). The title already goes to Wispr as `windowTitle`.
+// ponytail: title heuristic for Meet codes and Teams only; the real URL wins whenever AT-SPI has it
+pub fn meeting_url_from_title(title: &str) -> Option<String> {
+    if is_private_window(title) {
+        return None;
+    }
+    let is_code = |w: &str| {
+        let parts: Vec<&str> = w.split('-').collect();
+        parts.len() == 3 && [3, 4, 3].iter().zip(&parts).all(|(n, p)| p.len() == *n && p.bytes().all(|b| b.is_ascii_lowercase()))
+    };
+    if title.starts_with("Meet")
+        && let Some(code) = title.split_whitespace().find(|w| is_code(w))
+    {
+        return Some(format!("https://meet.google.com/{code}"));
+    }
+    title.contains("| Microsoft Teams").then(|| "https://teams.microsoft.com/".to_string())
+}
+
 /// Firefox "… — Private Browsing", Chrome/Chromium "… (Incognito)", Brave "… Private".
 fn is_private_window(title: &str) -> bool {
     ["Private Browsing", "Incognito", "Private"].iter().any(|m| title.contains(m))
@@ -217,6 +236,16 @@ fn is_private_window(title: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guesses_meeting_url_from_title() {
+        let url = |t| meeting_url_from_title(t);
+        assert_eq!(url("Meet - abc-defg-hij - Google Chrome").as_deref(), Some("https://meet.google.com/abc-defg-hij"));
+        assert_eq!(url("Chat | Daily | Microsoft Teams - Chromium").as_deref(), Some("https://teams.microsoft.com/"));
+        assert_eq!(url("Meet - abc-defg-hij - Google Chrome (Incognito)"), None);
+        assert_eq!(url("well-made-pie recipe - Google Chrome"), None);
+        assert_eq!(url("Meet the team - Google Chrome"), None);
+    }
 
     #[test]
     fn detects_private_windows() {
