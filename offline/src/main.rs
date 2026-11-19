@@ -205,7 +205,8 @@ fn main() -> Result<()> {
 
     if let Some(path) = &args.file {
         let bytes = std::fs::read(path)?;
-        let audio: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        // a trailing partial sample is dropped
+        let audio: Vec<f32> = bytes.chunks(4).filter_map(|b| b.try_into().ok().map(f32::from_le_bytes)).collect();
         let t = Instant::now();
         println!("{}", transcribe(&ctx, &args, &audio)?);
         eprintln!("transcribed {:.1}s audio in {:.2}s", audio.len() as f32 / WHISPER_RATE as f32, t.elapsed().as_secs_f32());
