@@ -8,5 +8,5 @@ anyhow = "1.0.104"
 arboard = { version = "3.7.0", features = ["wayland-data-control"] }
 evdev = "0.13.2"
 serde_json = "1.0.154"
-x11rb = { version = "0.14.0", features = ["xtest"] }
+x11rb = { version = "0.14.0", features = ["xtest", "xkb"] }
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }

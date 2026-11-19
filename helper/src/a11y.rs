@@ -209,6 +209,77 @@ pub fn active_url(pid: u32) -> Option<String> {
     None
 }
 
+/// Identity of the focused object, to notice when focus moves elsewhere.
+pub fn focus_id() -> Option<String> {
+    focus().map(|(bus, path)| format!("{bus}{path}"))
+}
+
+const NEARBY_NODE_LIMIT: usize = 250;
+const NEARBY_BUDGET: Duration = Duration::from_millis(300);
+const NEARBY_CHARS: usize = 4000;
+
+/// Visible text of the active window of the focused app (labels, headings, messages), one item per line.
+/// Wispr uses it to spell the names and terms on screen, as its macOS/Windows helpers do.
+/// Password fields and private browser windows are never read.
+// ponytail: bounded walk (250 nodes / 300 ms / 4000 chars) from the top of the window; start at the
+// focused element and widen outwards if large pages need the text nearest the cursor
+pub fn nearby_text() -> Option<String> {
+    let (bus, _) = focus()?;
+    let root = (bus, "/org/a11y/atspi/accessible/root".to_string());
+    let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
+    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
+    if is_private_window(&title) {
+        return None;
+    }
+    let deadline = Instant::now() + NEARBY_BUDGET;
+    let (mut stack, mut seen, mut out) = (vec![frame], 0, String::new());
+    while let Some(node) = stack.pop() {
+        seen += 1;
+        if seen > NEARBY_NODE_LIMIT || Instant::now() > deadline || out.len() > NEARBY_CHARS {
+            break;
+        }
+        if state_bits(&node).is_none_or(|s| s & (1 << STATE_SHOWING) == 0) {
+            continue;
+        }
+        let role: Option<u32> = call(&node, ACCESSIBLE, "GetRole", &()).and_then(|m| m.body().deserialize().ok());
+        if role == Some(ROLE_PASSWORD_TEXT) {
+            continue;
+        }
+        let name: String = prop(&node, ACCESSIBLE, "Name").unwrap_or_default();
+        let text = if name.trim().is_empty() {
+            call(&node, TEXT, "GetText", &(0i32, 300i32)).and_then(|m| m.body().deserialize::<String>().ok()).unwrap_or_default()
+        } else {
+            name
+        };
+        push_line(&mut out, &text);
+        stack.extend(children(&node).into_iter().rev());
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Appends `text` as one line, skipping blanks, object placeholders and immediate repeats.
+fn push_line(out: &mut String, text: &str) {
+    let line = text.replace('\u{fffc}', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+    if !line.is_empty() && out.lines().last() != Some(line.as_str()) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+}
+
+/// Where a pasted text sits in a text box: the text before it and the text after it.
+/// None if the box does not end the text before the caret with what was pasted.
+pub fn paste_anchor<'a>(tb: &'a TextBox, pasted: &str) -> Option<(&'a str, &'a str)> {
+    let pasted = pasted.trim_end();
+    let before = tb.before.trim_end();
+    (!pasted.is_empty() && before.ends_with(pasted)).then(|| (&tb.before[..before.len() - pasted.len()], tb.after.as_str()))
+}
+
+/// The text now between `prefix` and `suffix`: what the pasted text became after the user's edits.
+/// None once the text around it changed too, so the region can no longer be told apart.
+pub fn edited_region<'a>(contents: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
+    contents.strip_prefix(prefix)?.strip_suffix(suffix)
+}
+
 /// Meeting URL guessed from a browser window title, for browsers that hide their page from AT-SPI (Chrome without
 /// --force-renderer-accessibility). The title already goes to Wispr as `windowTitle`.
 // ponytail: title heuristic for Meet codes and Teams only; the real URL wins whenever AT-SPI has it
@@ -252,6 +323,24 @@ mod tests {
         assert!(is_private_window("Meet — Mozilla Firefox Private Browsing"));
         assert!(is_private_window("New Tab - Google Chrome (Incognito)"));
         assert!(!is_private_window("Meet - abc-defg-hij - Google Chrome"));
+    }
+
+    #[test]
+    fn follows_edits_to_pasted_text() {
+        let tb = TextBox { before: "Dear Sam, see you tomorow ".into(), after: "\nBye".into(), contents: String::new(), selected: String::new() };
+        let (prefix, suffix) = paste_anchor(&tb, "see you tomorow ").unwrap();
+        assert_eq!((prefix, suffix), ("Dear Sam, ", "\nBye"));
+        assert_eq!(edited_region("Dear Sam, see you tomorrow \nBye", prefix, suffix), Some("see you tomorrow "));
+        assert_eq!(edited_region("Hi Sam, see you tomorrow \nBye", prefix, suffix), None); // text before it changed
+        assert!(paste_anchor(&tb, "something else").is_none());
+        assert!(paste_anchor(&tb, "  ").is_none());
+    }
+
+    #[test]
+    fn collects_lines_without_repeats() {
+        let mut out = String::new();
+        for t in ["Inbox", "  ", "Inbox", "Anna\u{fffc}  Novak", "Inbox"] { push_line(&mut out, t); }
+        assert_eq!(out, "Inbox\nAnna Novak\nInbox\n");
     }
 
     #[test]

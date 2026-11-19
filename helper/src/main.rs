@@ -9,6 +9,7 @@ mod cursor;
 mod input;
 mod ipc;
 mod keys;
+mod layout;
 mod media;
 mod mic;
 mod output;
@@ -48,10 +49,19 @@ fn main() {
                 (None, Some(btn)) => (btn, "mouse"),
                 _ => return,
             };
-            if input_type == "keyboard" {
-                let mut down = KEYS_DOWN.lock().unwrap();
-                if pressed { down.insert(key); } else { down.remove(&key); }
-            }
+            let key = if input_type == "keyboard" {
+                // a release reports the code its press did, even if the layout changed in between
+                let mut held = KEYS_HELD.lock().unwrap();
+                if pressed {
+                    let vk = if wayland { key } else { layout::vk(code, key) };
+                    held.insert(code, vk);
+                    vk
+                } else {
+                    held.remove(&code).unwrap_or(key)
+                }
+            } else {
+                key
+            };
             let prefix = if input_type == "mouse" { "mouse_event" } else { "key_event" };
             let event = format!("{prefix}_{}", if pressed { "press" } else { "release" });
             let i = index.fetch_add(1, Ordering::SeqCst) + 1;
@@ -59,6 +69,9 @@ fn main() {
                 "eventType": event, "index": i, "inputType": input_type, "key": key } }));
         })
     };
+    if !wayland {
+        layout::init();
+    }
     match input::start(on_key, wayland) {
         Some(backend) => log(&format!("key input via {backend}")),
         None => log("no key input: add yourself to the 'input' group (see README)"),
@@ -125,8 +138,8 @@ fn text_box_info(x11: Option<output::AppInfo>) -> Value {
         "beforeText": "", "afterText": "", "contents": "", "selectedText": "" } })
 }
 
-/// Keyboard keys (Windows VK codes) that are physically down right now.
-static KEYS_DOWN: Mutex<std::collections::BTreeSet<u16>> = Mutex::new(std::collections::BTreeSet::new());
+/// Keyboard keys that are physically down right now: evdev code -> the Windows VK code reported for it.
+static KEYS_HELD: Mutex<std::collections::BTreeMap<u16, u16>> = Mutex::new(std::collections::BTreeMap::new());
 
 /// Of the keys Wispr believes are held, those that are not: it drops them, so a missed release
 /// cannot leave a shortcut (and a dictation) stuck.
@@ -165,7 +178,19 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "DictationStart" => {
             ipc::respond(&uuid, json!({ "ACK": true }));
             media::dictation_start();
-            ipc::request("TextBoxInfo", text_box_info(out.map(|o| o.lock().unwrap().active_app())));
+            let x11 = out.map(|o| o.lock().unwrap().active_app());
+            // AT-SPI focus that is not in the active X11 window is stale: do not read that app
+            let stale = x11.as_ref().filter(|a| !a.class.is_empty()).is_some_and(|a| a.pid.is_none() || a.pid != a11y::focused_pid());
+            ipc::request("TextBoxInfo", text_box_info(x11));
+            if !stale && context_awareness_on() {
+                std::thread::spawn(|| {
+                    let t = Instant::now();
+                    if let Some(text) = a11y::nearby_text() {
+                        ipc::request("AppContextUpdate", json!({ "payload": { "conversationId": "", "nearestTexts": text,
+                            "nearestTextDurationMs": t.elapsed().as_secs_f64() * 1000.0 } }));
+                    }
+                });
+            }
             let a = app();
             if !a.class.is_empty() {
                 ipc::request("AppInfoUpdate", json!({ "payload": app_payload(&a) }));
@@ -200,7 +225,7 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
             std::process::exit(0);
         }
         "CheckStaleKeys" => json!({ "StaleKeysResponse": { "payload": {
-            "staleKeys": stale_keys(&req[kind]["payload"]["keycodes"], &KEYS_DOWN.lock().unwrap()) } } }),
+            "staleKeys": stale_keys(&req[kind]["payload"]["keycodes"], &KEYS_HELD.lock().unwrap().values().copied().collect()) } } }),
         // Everything else is macOS/Windows integration (meetings, BLE, accessibility trees...): acknowledge.
         _ => json!({ "ACK": true }),
     };
@@ -253,7 +278,51 @@ fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
     if let Err(e) = result {
         payload["reason"] = json!(e.to_string());
     }
+    let observe = payload["success"] == true;
+    let id = payload["pasteId"].as_str().map(str::to_owned);
     ipc::request("PasteOutcome", json!({ "payload": payload }));
+    if let (true, Some(id)) = (observe, id) {
+        watch_edits(id, text.to_string());
+    }
+}
+
+static PASTE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// After a paste, follows what the user does to the pasted text and reports the result once
+/// (focus left the text box, the next paste, or a minute passed). Wispr learns corrections from it,
+/// e.g. "Auto-add to dictionary". Needs AT-SPI; without it nothing is reported.
+// ponytail: 1 s polling for at most 60 s; switch to AT-SPI text-changed events if that proves too coarse
+fn watch_edits(paste_id: String, pasted: String) {
+    let seq = PASTE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400)); // let the app insert the text
+        let (Some(focus), Some(tb)) = (a11y::focus_id(), a11y::text_box()) else { return };
+        let Some((prefix, suffix)) = a11y::paste_anchor(&tb, &pasted).map(|(p, s)| (p.to_string(), s.to_string())) else { return };
+        let mut edited = a11y::edited_region(&tb.contents, &prefix, &suffix).unwrap_or(&pasted).to_string();
+        let mut reason = "timeout";
+        for _ in 0..60 {
+            std::thread::sleep(Duration::from_secs(1));
+            if PASTE_SEQ.load(Ordering::SeqCst) != seq { reason = "new_paste"; break; }
+            let tb = a11y::text_box().filter(|_| a11y::focus_id().as_deref() == Some(focus.as_str()));
+            let Some(tb) = tb else { reason = "focus_lost"; break };
+            if let Some(now) = a11y::edited_region(&tb.contents, &prefix, &suffix) {
+                edited = now.to_string();
+            }
+        }
+        ipc::request("UpdateEditedText", json!({ "payload": { "pasteId": paste_id, "pastedText": pasted,
+            "editedText": edited, "contentObservationEndReason": reason } }));
+    });
+}
+
+/// Wispr's "Context awareness" setting (Settings > Data and Privacy). Off, or unreadable: read nothing extra.
+fn context_awareness_on() -> bool {
+    let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    let read = || -> Option<bool> {
+        let v: Value = serde_json::from_slice(&std::fs::read(dir?.join("Wispr Flow/config.json")).ok()?).ok()?;
+        v["prefs"]["user"]["useAxContext"].as_bool()
+    };
+    read().unwrap_or(false)
 }
 
 /// Wayland (or X11 without a class): fall back to the focused AT-SPI application's name.
