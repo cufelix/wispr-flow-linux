@@ -3,6 +3,8 @@
 # Usage: ./install.sh [extra wisperflow-linux args, e.g. --lang cs --key Super_R]
 #    or: curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/offline/install.sh | bash -s -- --lang cs
 set -euo pipefail
+# Under `curl | bash` the script itself is stdin: every command below that could read stdin gets </dev/null,
+# or it would swallow the rest of the script.
 
 # Use the local checkout only when run as a file; piped (curl | bash) fetches the repo.
 if [ -f "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/Cargo.toml" ]; then
@@ -15,11 +17,11 @@ fi
 
 if command -v apt-get >/dev/null; then
   dpkg -s build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers >/dev/null 2>&1 ||
-    { sudo apt-get update -qq; sudo apt-get install -y build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl; }
+    { sudo apt-get update -qq </dev/null; sudo apt-get install -y build-essential pkg-config xdotool cmake clang libclang-dev libasound2-dev libvulkan-dev glslc mesa-vulkan-drivers curl </dev/null; }
 elif command -v dnf >/dev/null; then
-  sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config xdotool cmake clang clang-devel alsa-lib-devel vulkan-loader-devel glslc mesa-vulkan-drivers curl
+  sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config xdotool cmake clang clang-devel alsa-lib-devel vulkan-loader-devel glslc mesa-vulkan-drivers curl </dev/null
 elif command -v pacman >/dev/null; then
-  sudo pacman -S --needed --noconfirm base-devel xdotool cmake clang alsa-lib vulkan-icd-loader vulkan-headers shaderc curl
+  sudo pacman -S --needed --noconfirm base-devel xdotool cmake clang alsa-lib vulkan-icd-loader vulkan-headers shaderc curl </dev/null
 else
   echo "Unknown package manager: install a C/C++ toolchain, pkg-config, xdotool, cmake, clang, ALSA and Vulkan dev headers, glslc." >&2
 fi
@@ -50,5 +52,5 @@ X-GNOME-Autostart-enabled=true
 DESKTOP
 
 pkill -x wisperflow-linu || true
-nohup ~/.local/bin/wisperflow-linux "$@" >> ~/.local/share/wisperflow-linux/log.txt 2>&1 &
+nohup ~/.local/bin/wisperflow-linux "$@" >> ~/.local/share/wisperflow-linux/log.txt 2>&1 </dev/null &
 echo "Running. Hold Right Ctrl, speak, release. Log: ~/.local/share/wisperflow-linux/log.txt"
