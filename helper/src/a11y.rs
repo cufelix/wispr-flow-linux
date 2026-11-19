@@ -224,8 +224,12 @@ const NEARBY_CHARS: usize = 4000;
 // ponytail: bounded walk (250 nodes / 300 ms / 4000 chars) from the top of the window; start at the
 // focused element and widen outwards if large pages need the text nearest the cursor
 pub fn nearby_text() -> Option<String> {
-    let (bus, _) = focus()?;
-    let root = (bus, "/org/a11y/atspi/accessible/root".to_string());
+    let focused = focus()?;
+    // a focus we can no longer confirm may belong to a window the user already left: read nothing
+    if state_bits(&focused).is_none_or(|s| s & (1 << STATE_FOCUSED) == 0) {
+        return None;
+    }
+    let root = (focused.0, "/org/a11y/atspi/accessible/root".to_string());
     let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
     let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
     if is_private_window(&title) {
@@ -241,8 +245,9 @@ pub fn nearby_text() -> Option<String> {
         if state_bits(&node).is_none_or(|s| s & (1 << STATE_SHOWING) == 0) {
             continue;
         }
-        let role: Option<u32> = call(&node, ACCESSIBLE, "GetRole", &()).and_then(|m| m.body().deserialize().ok());
-        if role == Some(ROLE_PASSWORD_TEXT) {
+        // unknown role: it could be a password field, so skip it and everything under it
+        let Some(role) = call(&node, ACCESSIBLE, "GetRole", &()).and_then(|m| m.body().deserialize::<u32>().ok()) else { continue };
+        if role == ROLE_PASSWORD_TEXT {
             continue;
         }
         let name: String = prop(&node, ACCESSIBLE, "Name").unwrap_or_default();
