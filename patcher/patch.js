@@ -88,6 +88,58 @@ function linuxCursorTracker() {
   start();
 }
 
+// On a Wayland session the app runs under XWayland (the launcher passes --ozone-platform=x11): native Wayland gives
+// apps no pointer position and no way to make part of a window click-through. Under XWayland a window that ignores
+// input gets no pointer events at all, so the cursor poll would never see the pointer arrive. Instead of ignoring
+// input, cut every overlay window (the ones that ask to ignore the mouse) down to its visible pixels: those take
+// hover and clicks, everything transparent falls through to the window below.
+function linuxAlphaShape() {
+  const { BrowserWindow } = require("electron");
+  if (process.env.XDG_SESSION_TYPE !== "wayland" || !process.env.DISPLAY) return;
+  const CELL = 8, tracked = new Map();
+  // visible pixels of a BGRA bitmap as rectangles on a CELL grid, in window (DIP) coordinates
+  const rectsOf = (bitmap, width, height, scale) => {
+    const cols = Math.ceil(width / CELL), rows = Math.ceil(height / CELL), open = new Map(), rects = [];
+    const filled = (cx, cy) => {
+      for (let y = cy * CELL; y < Math.min((cy + 1) * CELL, height); y += 2)
+        for (let x = cx * CELL; x < Math.min((cx + 1) * CELL, width); x += 2) if (bitmap[(y * width + x) * 4 + 3] > 8) return true;
+      return false;
+    };
+    for (let cy = 0; cy <= rows; cy++) {
+      const runs = new Map();
+      for (let cx = 0; cy < rows && cx < cols; cx++) {
+        if (!filled(cx, cy)) continue;
+        const start = cx;
+        while (cx + 1 < cols && filled(cx + 1, cy)) cx++;
+        runs.set(`${start}:${cx}`, [start, cx]);
+      }
+      for (const [key, rect] of open) if (!runs.has(key)) { rects.push(rect); open.delete(key); } // a run ended
+      for (const [key, [a, b]] of runs) {
+        if (open.has(key)) open.get(key).height += CELL;
+        else open.set(key, { x: a * CELL, y: cy * CELL, width: (b - a + 1) * CELL, height: CELL });
+      }
+    }
+    return rects.map((r) => ({ x: Math.floor(r.x / scale), y: Math.floor(r.y / scale), width: Math.ceil(r.width / scale), height: Math.ceil(r.height / scale) }));
+  };
+  const update = async (win) => {
+    if (win.isDestroyed() || !win.isVisible()) return;
+    try {
+      const image = await win.webContents.capturePage(), { width, height } = image.getSize();
+      if (!width || !height || win.isDestroyed()) return;
+      const rects = rectsOf(image.toBitmap(), width, height, width / win.getContentBounds().width);
+      const key = JSON.stringify(rects);
+      if (key === tracked.get(win).last) return;
+      tracked.get(win).last = key;
+      win.setShape(rects.length ? rects : [{ x: 0, y: 0, width: 1, height: 1 }]); // nothing visible: nothing to click
+    } catch {} // the page is loading or gone; the next tick retries
+  };
+  BrowserWindow.prototype.setIgnoreMouseEvents = function () {
+    if (tracked.has(this)) return;
+    tracked.set(this, { last: "", timer: setInterval(() => update(this), 150) });
+    this.once("closed", () => { clearInterval(tracked.get(this).timer); tracked.delete(this); });
+  };
+}
+
 // Name the webpack module alias bound to module `id` (e.g. `ri` for `ri=n(69583)`), nearest one before `offset`.
 function moduleAlias(src, offset, id) {
   const hits = [...src.slice(0, offset).matchAll(new RegExp(`[,;\\s]([a-zA-Z$]+)=n\\(${id}\\)`, "g"))];
@@ -155,7 +207,7 @@ const patches = [
     to: (_, call, offset, src) => {
       const alias = (id) => moduleAlias(src, offset, id);
       const args = `${alias(MODULE.prefsStore)}.RA,${alias(MODULE.prefsSetter)}.xB,${alias(MODULE.shortcuts)},${alias(MODULE.helper)}.sendHelperRequest`;
-      return `${call},${LINUX}&&((${linuxCursorTracker})(),(${migrateLinuxShortcuts})(${args})),`;
+      return `${call},${LINUX}&&((${linuxCursorTracker})(),(${linuxAlphaShape})(),(${migrateLinuxShortcuts})(${args})),`;
     },
   },
   {
@@ -271,7 +323,7 @@ function applyRendererPatches(src, bundle) {
   return applyPatches(src, list.map((p) => ({ ...p, name: `${p.name} (${bundle} renderer)` })));
 }
 
-module.exports = { applyPatches, applyRendererPatches, rendererBundles: Object.keys(rendererShortcutDefaults) };
+module.exports = { applyPatches, applyRendererPatches, linuxAlphaShape, rendererBundles: Object.keys(rendererShortcutDefaults) };
 
 if (require.main === module) {
   const file = process.argv[2];

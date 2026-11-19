@@ -267,7 +267,13 @@ if ! unshare -Ur true 2>/dev/null; then
   echo "wispr-flow: user namespaces unavailable, running without the Chromium sandbox" >&2
   SANDBOX=(--no-sandbox)
 fi
-exec "\$PREFIX/wispr-flow" "\${SANDBOX[@]}" "\$@"
+# Wayland session: run through XWayland. Only there can the floating bar sit where Wispr puts it and take clicks
+# (Wayland itself gives apps no pointer position and no partly click-through windows). WISPR_LINUX_OZONE=wayland opts out.
+OZONE=()
+if [ "\${XDG_SESSION_TYPE:-}" = wayland ] && [ -n "\${DISPLAY:-}" ]; then
+  OZONE=(--ozone-platform="\${WISPR_LINUX_OZONE:-x11}")
+fi
+exec "\$PREFIX/wispr-flow" "\${SANDBOX[@]}" "\${OZONE[@]}" "\$@"
 LAUNCHER
 chmod +x "$BIN_DIR/wispr-flow"
 
