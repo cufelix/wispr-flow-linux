@@ -286,8 +286,8 @@ const NEARBY_NODE_LIMIT: usize = 250;
 const NEARBY_BUDGET: Duration = Duration::from_millis(300);
 const NEARBY_CHARS: usize = 4000;
 const NEARBY_LINE: usize = 300;
-/// label, table cell, paragraph, heading, section, list item, link, static text
-const PROSE_ROLES: [u32; 8] = [29, 56, 73, 83, 85, 86, 88, 116];
+/// label, list item, table cell, paragraph, heading, section, link, static text
+const PROSE_ROLES: [u32; 8] = [29, 32, 56, 73, 83, 85, 88, 116];
 
 /// Visible text of the active window of the focused app (labels, headings, messages), one item per line.
 /// Wispr uses it to spell the names and terms on screen, as its macOS/Windows helpers do.
@@ -324,8 +324,8 @@ pub fn nearby_text() -> Option<String> {
         // password, read-only or not) and terminals stay unread
         let text = if !name.trim().is_empty() {
             name
-        } else if !PROSE_ROLES.contains(&role) {
-            String::new()
+        } else if !PROSE_ROLES.contains(&role) || state_bits(&node).is_none_or(|s| s & (1 << STATE_EDITABLE) != 0) {
+            String::new() // also an editable paragraph (a rich-text editor) is a field, not prose
         } else {
             call(&node, TEXT, "GetText", &(0i32, NEARBY_LINE as i32)).and_then(|m| m.body().deserialize::<String>().ok()).unwrap_or_default()
         };
