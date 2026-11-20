@@ -45,24 +45,22 @@ Then start **Wispr Flow** from your app menu (or run `wispr-flow`), click **Sign
 - **Uninstall**: `./install.sh uninstall` (or `curl -fsSL https://raw.githubusercontent.com/cufelix/wispr-flow-linux/main/install.sh | bash -s uninstall`). Your Wispr settings stay in `~/.config/Wispr Flow`.
 - **Helper binary**: built with `cargo` if you have Rust, otherwise a prebuilt static binary is downloaded from this repo's Releases and its SHA-256 is verified.
 
-### Wayland
+### It configures itself
 
-On X11 everything works without extra permissions. On Wayland, the helper listens for keys and sends Ctrl+V through the kernel input layer, so you need to grant your user access once:
+The installer looks at the session it runs in and sets up what that session needs:
 
-```bash
-sudo usermod -aG input $USER
-echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d/70-wispr-flow-uinput.rules
-sudo udevadm control --reload && sudo udevadm trigger   # then log out and back in
-```
+- **Wayland**: adds you to the `input` group and installs a udev rule for `/dev/uinput`, so the helper can hear the shortcut and paste. Log out and back in once.
+- **X11**: nothing extra is needed.
+- **Jabra headset plugged in**: installs the hidraw rule for wear detection (replug the headset once).
+- **GNOME/GTK**: turns on app accessibility, which the context features read.
 
-### Jabra headsets
-
-Wear detection talks to the headset over hidraw. Allow your desktop session to use Jabra devices, then replug the headset:
+`WISPR_LINUX_NO_DEPS=1` skips everything that needs root and prints the commands instead. If something does not work, run:
 
 ```bash
-echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b0e", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-wispr-flow-jabra.rules
-sudo udevadm control --reload
+wispr-flow doctor
 ```
+
+It checks the install, the display, input access, the sandbox, the audio server and the accessibility bus, and prints the fix for each failed check.
 
 ## What works
 
@@ -85,7 +83,7 @@ sudo udevadm control --reload
 | Meeting auto-detect (Zoom, Teams, Meet... start using the mic) | ✅ the helper reports which apps hold the microphone (PipeWire/PulseAudio), as on Windows; Linux names such as Chromium, Vivaldi or Teams for Linux are mapped to the apps Wispr knows. Meetings in a browser are recognized from the page URL, read over accessibility: read from the page in Firefox and in current Chrome/Chromium (checked with Chrome 145; older versions need `--force-renderer-accessibility`), and otherwise Google Meet and Teams are still recognized from the window title. Slack huddles are detected like any call, when Slack takes the microphone. Speaker names in transcripts: for Google Meet in a browser the helper reads the participant tiles over accessibility (Wispr's own tile and speaking-marker class names), in any non-private window of Firefox or Chrome/Chromium; Zoom, Teams and Slack get none. Checked against a local mock page only, never a real Meet call: in the real app with a mock Meet page in Chrome 145, Wispr started speaker polling and received the names of whoever was speaking; whether real Meet marks its speaking tile the same way is untested. When the microphone is released, a Chrome/Chromium Meet call whose browser window is gone, or whose tab was closed in a window that stays open (read from the tab strip), is stopped at once instead of after a prompt (X11 only; checked end to end in the real app with a mock Meet page in Chrome 145: stopped 5 s after the tab was closed). If a Wispr update changes the code behind speaker names, the window check or the Slack huddle read, the installer leaves that one extra off |
 | Meeting recorder with the other participants' audio | ✅ system audio is captured from the default output (PulseAudio/PipeWire monitor), as on Windows; the recording then also stops by itself when a browser call ends. (Unpatched, Wispr turns this off on Linux and fails with "Could not capture system audio"; the patcher enables it.) The output must not be muted: a muted or zero-volume output records as silence |
 | Wispr's BLE MicRing | ✅ paired over BlueZ; the helper forwards the ring's audio and buttons. Wispr shows it only for accounts with the `ble-mic-ring` flag. Untested without the hardware |
-| Jabra headset wear detection | ✅ via Wispr's bundled Linux Jabra connector (x86_64). Give your user access to the headset once (see [Jabra headsets](#jabra-headsets)). The connector starts on Linux; untested with a headset |
+| Jabra headset wear detection | ✅ via Wispr's bundled Linux Jabra connector (x86_64). The installer adds the access rule when a headset is plugged in. The connector starts on Linux; untested with a headset |
 | Automatic updates | ✅ checked every 12 h, installed on restart |
 
 ## How it works

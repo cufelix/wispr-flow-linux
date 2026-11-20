@@ -44,6 +44,46 @@ if [ "${1:-}" = uninstall ]; then
   exit 0
 fi
 
+UINPUT_RULE=/etc/udev/rules.d/70-wispr-flow-uinput.rules
+JABRA_RULE=/etc/udev/rules.d/70-wispr-flow-jabra.rules
+session_name() { echo "${XDG_CURRENT_DESKTOP:-unknown desktop} on ${XDG_SESSION_TYPE:-unknown session}"; }
+has_jabra() { grep -qsx 0b0e /sys/bus/usb/devices/*/idVendor; }
+a11y_bus() {
+  busctl --user status org.a11y.Bus >/dev/null 2>&1 ||
+    dbus-send --session --dest=org.a11y.Bus --print-reply /org/a11y/bus org.a11y.Bus.GetAddress >/dev/null 2>&1
+}
+
+# `doctor`: checks what this session needs and says how to fix what is missing.
+if [ "${1:-}" = doctor ]; then
+  BAD=0
+  ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+  bad() { printf '  \033[31m✗\033[0m %s\n      fix: %s\n' "$1" "$2"; BAD=1; }
+  note() { printf '  \033[33m!\033[0m %s\n      %s\n' "$1" "$2"; }
+  say "Wispr Flow doctor: $(session_name)"
+  if [ -f "$PREFIX/WISPR_VERSION" ]; then ok "Wispr Flow $(cat "$PREFIX/WISPR_VERSION") installed"; else bad "app not installed in $PREFIX" "run the installer"; fi
+  if [ -x "$PREFIX/wispr-flow-linux-helper" ]; then ok "Linux helper present"; else bad "Linux helper missing" "run the installer again"; fi
+  case ":$PATH:" in *":$BIN_DIR:"*) ok "$BIN_DIR is on PATH" ;; *) note "$BIN_DIR is not on PATH" "start the app from the menu, or add it to PATH in your shell profile" ;; esac
+  XNUM="${DISPLAY#*:}"
+  if [ -n "${DISPLAY:-}" ] && [ -S "/tmp/.X11-unix/X${XNUM%%.*}" ]; then ok "X display $DISPLAY (floating bar takes clicks)"
+  else note "no X11/XWayland display" "the app runs as a native Wayland window; the floating bar stays click-through"; fi
+  if [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
+    if id -nG | grep -qw input; then ok "in the input group (global shortcut)"
+    else bad "not in the input group: the shortcut cannot be heard on Wayland" "sudo usermod -aG input \$USER, then log out and back in"; fi
+    if [ -w /dev/uinput ]; then ok "/dev/uinput writable (pasting)"
+    else bad "/dev/uinput not writable: text cannot be pasted on Wayland" "run the installer again (adds $UINPUT_RULE), then log out and back in"; fi
+  fi
+  if unshare -Ur true 2>/dev/null; then ok "Chromium sandbox available"; else note "user namespaces are off" "the app runs with --no-sandbox"; fi
+  if pactl info >/dev/null 2>&1; then ok "audio server: $(pactl info | sed -n 's/^Server Name: //p')"
+  else bad "no PulseAudio/PipeWire server (pactl)" "install pipewire-pulse or pulseaudio-utils; needed for meeting detection and system audio"; fi
+  if a11y_bus; then ok "accessibility bus (window context, speaker names)"
+  else note "accessibility bus not running" "context features stay off; install at-spi2-core and log in again"; fi
+  if has_jabra; then
+    if [ -f "$JABRA_RULE" ]; then ok "Jabra headset rule installed"; else bad "Jabra headset without access rule" "run the installer again"; fi
+  fi
+  [ "$BAD" = 0 ] && say "All good." || say "Some checks failed; fixes are listed above."
+  exit "$BAD"
+fi
+
 # `auto-update`: run by the launcher in the background. At most every 12 h it asks wisprflow.ai
 # for the latest version; a newer one is built into $PREFIX.staged with the installed copy of
 # this script (no code is fetched from GitHub) and the launcher swaps it in on the next start.
@@ -244,6 +284,7 @@ cat > "$BIN_DIR/wispr-flow" <<LAUNCHER
 #!/usr/bin/env bash
 PREFIX=$(printf %q "$PREFIX")
 $(declare -f app_pids)
+[ "\${1:-}" = doctor ] && exec env WISPR_LINUX_PREFIX="\$PREFIX" bash "\$PREFIX/updater/install.sh" doctor
 # an update downloaded in the background is swapped in when the app is not running
 if [ -f "\$PREFIX.staged/WISPR_VERSION" ] && [ -f "\$PREFIX/WISPR_VERSION" ] && [ -z "\$(app_pids)" ]; then
   (
@@ -298,9 +339,36 @@ desktop_entry --autostart > "$AUTOSTART_DIR/wispr-flow.desktop" # starts hidden 
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
 command -v xdg-mime >/dev/null && xdg-mime default wispr-flow.desktop x-scheme-handler/wispr-flow || true
 
-say "Wispr Flow $VERSION installed. Start it from your app menu or run: wispr-flow"
-if [ "${XDG_SESSION_TYPE:-}" = wayland ] && ! id -nG | grep -qw input; then
-  echo "    Wayland: allow global shortcuts and typing with:"
-  echo "    sudo usermod -aG input \$USER && echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' | sudo tee /etc/udev/rules.d/70-wispr-flow-uinput.rules && sudo udevadm control --reload && sudo udevadm trigger"
-  echo "    then log out and back in."
+# Configure this machine for the session it runs: Wayland needs kernel input access for the shortcut and
+# for pasting, a plugged-in Jabra headset needs a hidraw rule, GTK apps need accessibility switched on.
+need_relogin=""
+root_setup() { # $1 = what for, rest = command
+  local why="$1"; shift
+  if [ -n "${WISPR_LINUX_NO_DEPS:-}" ] || { [ -n "$SUDO" ] && ! command -v sudo >/dev/null; }; then
+    echo "    $why, run as root: $*"; return 1
+  fi
+  say "$why (you may be asked for your password)"
+  $SUDO "$@"
+}
+if [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
+  if ! id -nG | grep -qw input; then
+    root_setup "Wayland: adding $(id -un) to the input group for the global shortcut" usermod -aG input "$(id -un)" && need_relogin=1
+  fi
+  if [ ! -f "$UINPUT_RULE" ]; then
+    root_setup "Wayland: allowing the input group to paste through /dev/uinput" \
+      sh -c "echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"' > $UINPUT_RULE && udevadm control --reload && udevadm trigger" || true
+  fi
 fi
+if has_jabra && [ ! -f "$JABRA_RULE" ]; then
+  root_setup "Jabra headset found: allowing wear detection" \
+    sh -c "echo 'SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"0b0e\", TAG+=\"uaccess\"' > $JABRA_RULE && udevadm control --reload" \
+    && echo "    Replug the headset once." || true
+fi
+if command -v gsettings >/dev/null && [ "$(gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null)" = false ]; then
+  gsettings set org.gnome.desktop.interface toolkit-accessibility true && say "Turned on app accessibility (window context)"
+fi
+
+say "Wispr Flow $VERSION installed for $(session_name). Start it from your app menu or run: wispr-flow"
+[ -z "$need_relogin" ] || echo "    Log out and back in once, so the new input group applies."
+case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "    $BIN_DIR is not on your PATH; the app menu entry works either way." ;; esac
+echo "    Something not working? Run: wispr-flow doctor"
