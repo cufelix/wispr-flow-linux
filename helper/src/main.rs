@@ -13,6 +13,7 @@ mod layout;
 mod media;
 mod mic;
 mod output;
+mod slack;
 
 use serde_json::{json, Value};
 use std::io::Read;
@@ -161,6 +162,17 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "GetRunningApps" => apps::running(),
         "GetDeviceInfo" => json!({ "DeviceInfo": { "payload": { "status": "missing" } } }),
         "GetMicrophoneHolders" => mic::snapshot(),
+        "GetSlackHuddleState" => slack::state(),
+        // Posting into a meeting chat needs the chat input positively identified; Linux cannot do that, so
+        // type nothing and say so: Wispr then asks the user to post the notice by hand.
+        // ponytail: Wispr never sends this on Linux (speaker polling is off); this only spares a patched build a 4 minute wait.
+        "PostConsentChatMessage" => {
+            ipc::respond(&uuid, json!({ "ACK": true }));
+            let p = &req[kind]["payload"];
+            ipc::request("ConsentChatMessageOutcome", json!({ "payload": { "success": false, "failureReason": "unsupported_platform",
+                "platform": p["platform"], "sessionId": p["sessionId"] } }));
+            return;
+        }
         "SetMicrophoneHoldersMonitor" => {
             let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
             mic::set_monitor(p["enabled"].as_bool().unwrap_or(false), p["cadenceMs"].as_u64())

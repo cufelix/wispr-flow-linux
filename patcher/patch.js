@@ -273,6 +273,18 @@ const patches = [
     re: /"darwin"!==process\.platform&&"win32"!==process\.platform(?=\|\|(?:null===[a-zA-Z$]+\|\|![a-zA-Z$]+\.isEnabled\(\)\)return;const [a-zA-Z$]+=\+\+|\(0,[a-zA-Z$]+\.setMicrophoneHoldersMonitor\)))/,
     to: (gate) => `${gate}&&!(${LINUX})`,
   },
+  // Slack on the microphone: Wispr asks the helper whether it is a huddle (GetSlackHuddleState). On Linux the helper
+  // answers "huddle" for Slack's pop-out huddle window and "unknown" otherwise, which Wispr treats as a call, as before.
+  {
+    name: "slack huddle: ask the helper on Linux",
+    re: /("darwin"!==process\.platform&&"win32"!==process\.platform)(\)return [a-zA-Z$]+;const [a-zA-Z$]+=await [a-zA-Z$]+\("GetSlackHuddleState")/,
+    to: (_, gate, rest) => `${gate}&&!(${LINUX})${rest}`,
+  },
+  {
+    name: "slack huddle: do not bypass the huddle read as an unsupported platform on Linux",
+    re: /("win32"!==[a-zA-Z$]+\.platform)(\?"platform_unsupported":[a-zA-Z$]+\.recordingActiveOrStopping)/,
+    to: (_, gate, rest) => `${gate}&&!(${LINUX})${rest}`,
+  },
   // Wispr skips system audio on Linux ("no system loopback path"), so a meeting recording fails with "Could not capture
   // system audio" and has no other participants. Electron does loop back the default output's PulseAudio/PipeWire monitor.
   {
