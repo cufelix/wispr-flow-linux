@@ -305,7 +305,7 @@ pub fn meeting_url_from_title(title: &str) -> Option<String> {
 }
 
 /// Firefox "… — Private Browsing", Chrome/Chromium "… (Incognito)", Brave "… Private".
-fn is_private_window(title: &str) -> bool {
+pub fn is_private_window(title: &str) -> bool {
     ["Private Browsing", "Incognito", "Private"].iter().any(|m| title.contains(m))
 }
 

@@ -5,6 +5,7 @@
 mod a11y;
 mod apps;
 mod ble;
+mod confwin;
 mod cursor;
 mod input;
 mod ipc;
@@ -161,6 +162,8 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "GetRunningApps" => apps::running(),
         "GetDeviceInfo" => json!({ "DeviceInfo": { "payload": { "status": "missing" } } }),
         "GetMicrophoneHolders" => mic::snapshot(),
+        // only the conference window monitor (arm/read/disarm); a plain end-state read needs the page's accessibility tree
+        "GetConferenceEndState" => confwin::control(&req[kind]["payload"]).unwrap_or_else(|| json!({ "ACK": true })),
         "SetMicrophoneHoldersMonitor" => {
             let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
             mic::set_monitor(p["enabled"].as_bool().unwrap_or(false), p["cadenceMs"].as_u64())

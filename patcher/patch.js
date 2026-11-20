@@ -280,6 +280,29 @@ const patches = [
     re: /if\("linux"===process\.platform\)return [a-zA-Z$]+\(\)\.info\("\[MeetingDisplayMedia\] Skipping handler install on Linux[^"]*"\),void\([a-zA-Z$]+=!0\);([^;]{0,120}\{if\()("win32"===process\.platform)(\)return void [a-zA-Z$]+\(\{audio:"loopback"\}\))/,
     to: (_, a, gate, b) => `${a}${gate}||${LINUX}${b}`,
   },
+  // Conference window monitor: when the mic holder drops, Wispr asks the helper whether the Meet window itself is gone
+  // and, if so, stops at once instead of prompting. Opened for Chrome-family Meet calls; the helper answers from the
+  // X11 window list (confwin.rs). Everything else (tab scan, strip monitor, end-state controls) stays off on Linux.
+  {
+    name: "conference window monitor: feed mode on Linux",
+    re: /([a-zA-Z$]+=[a-zA-Z$]+\|\|[a-zA-Z$]+)(\?"feed":"off",[a-zA-Z$]+=[a-zA-Z$]+&&[a-zA-Z$]+&&"feed"===)/,
+    to: (_, a, b) => `${a}||${LINUX}${b}`,
+  },
+  {
+    name: "conference window monitor: subscribe on Linux",
+    re: /([a-zA-Z$]+=\(\)=>"darwin"===process\.platform\|\|"win32"===process\.platform)(;let [a-zA-Z$]+=null,[a-zA-Z$]+=0,[a-zA-Z$]+=null)/,
+    to: (_, a, b) => `${a}||${LINUX}${b}`,
+  },
+  {
+    name: "conference window monitor: arm on Linux",
+    re: /(jc\(\)\?"darwin"!==process\.platform&&"win32"!==process\.platform)(\?"platform_unsupported")/,
+    to: (_, a, b) => `${a}&&!(${LINUX})${b}`,
+  },
+  {
+    name: "conference window monitor: browser ids on Linux (Windows exe names; the helper maps them to its X11 windows)",
+    re: /"win32"===process\.platform(\?[a-zA-Z$]+\.rA\[e\.platform\]:[a-zA-Z$]+\.yt\[e\.platform\])/,
+    to: (_, a) => `("win32"===process.platform||${LINUX})${a}`,
+  },
   // Linux has no setIgnoreMouseEvents({forward}), so the floating bar is clickable only through the cursor poll
   // (ignoreMouseEventsWhenNotInAlphaRegion); poll faster than the default 400ms so the bar reacts when the pointer arrives.
   {
@@ -323,7 +346,7 @@ function applyRendererPatches(src, bundle) {
   return applyPatches(src, list.map((p) => ({ ...p, name: `${p.name} (${bundle} renderer)` })));
 }
 
-module.exports = { applyPatches, applyRendererPatches, linuxAlphaShape, rendererBundles: Object.keys(rendererShortcutDefaults) };
+module.exports = { patches, applyPatches, applyRendererPatches, linuxAlphaShape, rendererBundles: Object.keys(rendererShortcutDefaults) };
 
 if (require.main === module) {
   const file = process.argv[2];
