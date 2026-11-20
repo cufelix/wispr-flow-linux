@@ -37,13 +37,19 @@ fn start_evdev(on_key: OnKey) -> bool {
                 }
                 let (on_key, open) = (on_key.clone(), open.clone());
                 std::thread::spawn(move || {
+                    let mut down = std::collections::HashSet::new();
                     while let Ok(events) = dev.fetch_events() {
                         for ev in events {
                             // value: 0 release, 1 press, 2 autorepeat (ignored)
                             if ev.event_type() == EventType::KEY && ev.value() < 2 {
+                                if ev.value() == 1 { down.insert(ev.code()); } else { down.remove(&ev.code()); }
                                 on_key(ev.code(), ev.value() == 1);
                             }
                         }
+                    }
+                    // unplugged or asleep with keys down: their releases will never come, so send them
+                    for code in down {
+                        on_key(code, false);
                     }
                     open.lock().unwrap().remove(&path); // unplugged: allow reopening later
                 });

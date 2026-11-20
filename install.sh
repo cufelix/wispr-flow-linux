@@ -270,7 +270,8 @@ fi
 # Wayland session: run through XWayland. Only there can the floating bar sit where Wispr puts it and take clicks
 # (Wayland itself gives apps no pointer position and no partly click-through windows). WISPR_LINUX_OZONE=wayland opts out.
 OZONE=()
-if [ "\${XDG_SESSION_TYPE:-}" = wayland ] && [ -n "\${DISPLAY:-}" ]; then
+XNUM="\${DISPLAY#*:}" # ":0.0" -> "0"
+if [ "\${XDG_SESSION_TYPE:-}" = wayland ] && [ -n "\${DISPLAY:-}" ] && [ -S "/tmp/.X11-unix/X\${XNUM%%.*}" ]; then
   OZONE=(--ozone-platform="\${WISPR_LINUX_OZONE:-x11}")
 fi
 exec "\$PREFIX/wispr-flow" "\${SANDBOX[@]}" "\${OZONE[@]}" "\$@"

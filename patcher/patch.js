@@ -94,8 +94,9 @@ function linuxCursorTracker() {
 // input, cut every overlay window (the ones that ask to ignore the mouse) down to its visible pixels: those take
 // hover and clicks, everything transparent falls through to the window below.
 function linuxAlphaShape() {
-  const { BrowserWindow } = require("electron");
-  if (process.env.XDG_SESSION_TYPE !== "wayland" || !process.env.DISPLAY) return;
+  const { app, BrowserWindow } = require("electron");
+  // only when really running on X (XWayland): as a native Wayland app setShape does nothing and the windows must keep ignoring input
+  if (process.env.XDG_SESSION_TYPE !== "wayland" || app.commandLine.getSwitchValue("ozone-platform") !== "x11") return;
   const CELL = 8, tracked = new Map();
   // visible pixels of a BGRA bitmap as rectangles on a CELL grid, in window (DIP) coordinates
   const rectsOf = (bitmap, width, height, scale) => {
@@ -122,20 +123,26 @@ function linuxAlphaShape() {
     return rects.map((r) => ({ x: Math.floor(r.x / scale), y: Math.floor(r.y / scale), width: Math.ceil(r.width / scale), height: Math.ceil(r.height / scale) }));
   };
   const update = async (win) => {
-    if (win.isDestroyed() || !win.isVisible()) return;
+    const state = tracked.get(win);
+    if (!state || state.busy || win.isDestroyed() || !win.isVisible()) return;
+    state.busy = true; // captures never overlap
     try {
       const image = await win.webContents.capturePage(), { width, height } = image.getSize();
       if (!width || !height || win.isDestroyed()) return;
       const rects = rectsOf(image.toBitmap(), width, height, width / win.getContentBounds().width);
       const key = JSON.stringify(rects);
-      if (key === tracked.get(win).last) return;
-      tracked.get(win).last = key;
-      win.setShape(rects.length ? rects : [{ x: 0, y: 0, width: 1, height: 1 }]); // nothing visible: nothing to click
+      if (key !== state.last) {
+        state.last = key;
+        win.setShape(rects.length ? rects : [{ x: 0, y: 0, width: 1, height: 1 }]); // nothing visible: nothing to click
+      }
     } catch {} // the page is loading or gone; the next tick retries
+    state.busy = false;
   };
+  // The app's own true/false is dropped on purpose: once the pointer leaves, XWayland stops reporting it, the app
+  // would keep a whole window interactive, and that window would swallow clicks meant for whatever is under it.
   BrowserWindow.prototype.setIgnoreMouseEvents = function () {
     if (tracked.has(this)) return;
-    tracked.set(this, { last: "", timer: setInterval(() => update(this), 150) });
+    tracked.set(this, { last: "", busy: false, timer: setInterval(() => update(this), 150) });
     this.once("closed", () => { clearInterval(tracked.get(this).timer); tracked.delete(this); });
   };
 }

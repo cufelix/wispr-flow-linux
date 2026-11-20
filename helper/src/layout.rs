@@ -27,6 +27,9 @@ pub fn init() {
 /// The VK code for evdev key `code` under the active layout, if the layout moves it. `position_vk` is its
 /// VK on a US keyboard.
 pub fn vk(code: u16, position_vk: u16) -> u16 {
+    if !moves(position_vk) {
+        return position_vk; // modifiers, space, digits...: no X round trip on the key thread
+    }
     let mut guard = LAYOUT.lock().unwrap();
     let Some(l) = guard.as_mut() else { return position_vk };
     if l.fetched.is_none_or(|t| t.elapsed() > REFRESH) {
@@ -51,11 +54,15 @@ fn level0(map: &KeySymMap, group: u8) -> Option<u32> {
     (groups > 0).then(|| map.syms.get(g as usize * map.width as usize).copied()).flatten()
 }
 
+/// Keys whose VK code depends on the layout: letters and punctuation.
+fn moves(position_vk: u16) -> bool {
+    (65..=90).contains(&position_vk) || matches!(position_vk, 186..=192 | 219..=222)
+}
+
 /// Latin letters and the punctuation Windows has VK codes for follow the layout; everything else
 /// (digits row, Cyrillic, Greek...) keeps its US position, which is also what Windows does for non-Latin layouts.
 fn translate(sym: u32, position_vk: u16) -> u16 {
-    let moves = (65..=90).contains(&position_vk) || matches!(position_vk, 186..=192 | 219..=222);
-    if !moves {
+    if !moves(position_vk) {
         return position_vk;
     }
     match char::from_u32(sym) {

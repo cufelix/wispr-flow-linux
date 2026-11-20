@@ -49,18 +49,20 @@ fn main() {
                 (None, Some(btn)) => (btn, "mouse"),
                 _ => return,
             };
-            let key = if input_type == "keyboard" {
-                // a release reports the code its press did, even if the layout changed in between
-                let mut held = KEYS_HELD.lock().unwrap();
-                if pressed {
-                    let vk = if wayland { key } else { layout::vk(code, key) };
-                    held.insert(code, vk);
-                    vk
-                } else {
-                    held.remove(&code).unwrap_or(key)
-                }
-            } else {
+            // Wispr tracks held keys and mouse buttons in one table (mouse button b as 4096 + b) and asks about
+            // them in CheckStaleKeys. Read the layout before taking the lock: it is an X round trip.
+            let key = if pressed {
+                let key = if input_type == "keyboard" && !wayland { layout::vk(code, key) } else { key };
+                let tracked = if input_type == "mouse" { 4096 + key } else { key };
+                KEYS_HELD.lock().unwrap().insert(code, tracked);
                 key
+            } else {
+                // a release reports the code its press did, even if the layout changed in between
+                match KEYS_HELD.lock().unwrap().remove(&code) {
+                    Some(tracked) if input_type == "mouse" => tracked - 4096,
+                    Some(tracked) => tracked,
+                    None => key,
+                }
             };
             let prefix = if input_type == "mouse" { "mouse_event" } else { "key_event" };
             let event = format!("{prefix}_{}", if pressed { "press" } else { "release" });
@@ -138,7 +140,7 @@ fn text_box_info(x11: Option<output::AppInfo>) -> Value {
         "beforeText": "", "afterText": "", "contents": "", "selectedText": "" } })
 }
 
-/// Keyboard keys that are physically down right now: evdev code -> the Windows VK code reported for it.
+/// Keys and mouse buttons that are physically down right now: evdev code -> the code Wispr tracks for it.
 static KEYS_HELD: Mutex<std::collections::BTreeMap<u16, u16>> = Mutex::new(std::collections::BTreeMap::new());
 
 /// Of the keys Wispr believes are held, those that are not: it drops them, so a missed release
@@ -263,6 +265,8 @@ fn spawn_paster(out: Option<Arc<Mutex<output::Output>>>) -> Sender<Job> {
 }
 
 fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
+    // before the text lands, so a watcher of the previous paste never takes this one for an edit
+    let seq = PASTE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let t = Instant::now();
     let result = match out {
         Some(o) => o.lock().unwrap().paste(text),
@@ -282,7 +286,7 @@ fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
     let id = payload["pasteId"].as_str().map(str::to_owned);
     ipc::request("PasteOutcome", json!({ "payload": payload }));
     if let (true, Some(id)) = (observe, id) {
-        watch_edits(id, text.to_string());
+        watch_edits(seq, id, text.to_string(), out.map(|o| o.lock().unwrap().active_app().title).unwrap_or_default());
     }
 }
 
@@ -290,23 +294,30 @@ static PASTE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// After a paste, follows what the user does to the pasted text and reports the result once
 /// (focus left the text box, the next paste, or a minute passed). Wispr learns corrections from it,
-/// e.g. "Auto-add to dictionary". Needs AT-SPI; without it nothing is reported.
+/// e.g. "Auto-add to dictionary". Needs AT-SPI; without it nothing is reported. Like the window context,
+/// it follows Wispr's "Context awareness" setting and never reads a private browser window.
 // ponytail: 1 s polling for at most 60 s; switch to AT-SPI text-changed events if that proves too coarse
-fn watch_edits(paste_id: String, pasted: String) {
-    let seq = PASTE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+fn watch_edits(seq: u64, paste_id: String, pasted: String, window_title: String) {
+    if !context_awareness_on() || a11y::is_private_window(&window_title) {
+        return;
+    }
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400)); // let the app insert the text
         let (Some(focus), Some(tb)) = (a11y::focus_id(), a11y::text_box()) else { return };
         let Some((prefix, suffix)) = a11y::paste_anchor(&tb, &pasted).map(|(p, s)| (p.to_string(), s.to_string())) else { return };
-        let mut edited = a11y::edited_region(&tb.contents, &prefix, &suffix).unwrap_or(&pasted).to_string();
+        // corrections stay near the size of what was pasted; anything much longer is new writing, not ours to send
+        let limit = pasted.len() * 2 + 64;
+        let mut edited = pasted.clone();
         let mut reason = "timeout";
         for _ in 0..60 {
             std::thread::sleep(Duration::from_secs(1));
             if PASTE_SEQ.load(Ordering::SeqCst) != seq { reason = "new_paste"; break; }
             let tb = a11y::text_box().filter(|_| a11y::focus_id().as_deref() == Some(focus.as_str()));
             let Some(tb) = tb else { reason = "focus_lost"; break };
-            if let Some(now) = a11y::edited_region(&tb.contents, &prefix, &suffix) {
-                edited = now.to_string();
+            match a11y::edited_region(&tb.contents, &prefix, &suffix) {
+                Some(now) if now.len() <= limit => edited = now.to_string(),
+                Some(_) => { reason = "region_grew"; break }
+                None => {}
             }
         }
         ipc::request("UpdateEditedText", json!({ "payload": { "pasteId": paste_id, "pastedText": pasted,

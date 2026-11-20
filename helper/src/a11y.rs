@@ -217,6 +217,7 @@ pub fn focus_id() -> Option<String> {
 const NEARBY_NODE_LIMIT: usize = 250;
 const NEARBY_BUDGET: Duration = Duration::from_millis(300);
 const NEARBY_CHARS: usize = 4000;
+const NEARBY_LINE: usize = 300;
 
 /// Visible text of the active window of the focused app (labels, headings, messages), one item per line.
 /// Wispr uses it to spell the names and terms on screen, as its macOS/Windows helpers do.
@@ -251,14 +252,19 @@ pub fn nearby_text() -> Option<String> {
             continue;
         }
         let name: String = prop(&node, ACCESSIBLE, "Name").unwrap_or_default();
-        let text = if name.trim().is_empty() {
-            call(&node, TEXT, "GetText", &(0i32, 300i32)).and_then(|m| m.body().deserialize::<String>().ok()).unwrap_or_default()
-        } else {
+        // an unnamed node's own text only if it is not an input: other fields (codes, card numbers) stay unread
+        let editable = state_bits(&node).is_some_and(|s| s & (1 << STATE_EDITABLE) != 0);
+        let text = if !name.trim().is_empty() {
             name
+        } else if editable {
+            String::new()
+        } else {
+            call(&node, TEXT, "GetText", &(0i32, NEARBY_LINE as i32)).and_then(|m| m.body().deserialize::<String>().ok()).unwrap_or_default()
         };
-        push_line(&mut out, &text);
+        push_line(&mut out, &text.chars().take(NEARBY_LINE).collect::<String>());
         stack.extend(children(&node).into_iter().rev());
     }
+    let out: String = out.chars().take(NEARBY_CHARS).collect();
     (!out.is_empty()).then_some(out)
 }
 
@@ -304,9 +310,14 @@ pub fn meeting_url_from_title(title: &str) -> Option<String> {
     title.contains("| Microsoft Teams").then(|| "https://teams.microsoft.com/".to_string())
 }
 
-/// Firefox "… — Private Browsing", Chrome/Chromium "… (Incognito)", Brave "… Private".
-fn is_private_window(title: &str) -> bool {
-    ["Private Browsing", "Incognito", "Private"].iter().any(|m| title.contains(m))
+/// Private/incognito browser windows, by title: Firefox "… — Private Browsing", Chrome "… (Incognito)", Edge
+/// "… InPrivate", Brave "… Private", and the same in other UI languages.
+// ponytail: a title word list (browsers expose no private flag over X11/AT-SPI); add words as languages come up
+pub fn is_private_window(title: &str) -> bool {
+    const MARKS: [&str; 12] = ["private", "privat", "privé", "privad", "privát", "incognito", "inkognito", "incógnito",
+        "anonym", "inprivate", "приват", "инкогнито"];
+    let title = title.to_lowercase();
+    MARKS.iter().any(|m| title.contains(m))
 }
 
 #[cfg(test)]
@@ -328,6 +339,9 @@ mod tests {
         assert!(is_private_window("Meet — Mozilla Firefox Private Browsing"));
         assert!(is_private_window("New Tab - Google Chrome (Incognito)"));
         assert!(!is_private_window("Meet - abc-defg-hij - Google Chrome"));
+        assert!(is_private_window("Nová karta – Google Chrome (Anonymní)"));
+        assert!(is_private_window("Neuer Tab - Google Chrome (Inkognito)"));
+        assert!(is_private_window("New tab - Microsoft Edge InPrivate"));
     }
 
     #[test]
