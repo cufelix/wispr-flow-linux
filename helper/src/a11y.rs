@@ -9,10 +9,10 @@ use zbus::zvariant::{OwnedValue, Value};
 const CALL_TIMEOUT: Duration = Duration::from_millis(100); // per D-Bus call
 const BUDGET: Duration = Duration::from_millis(150); // whole text_box() query
 const MAX_CHARS: i32 = 20000;
-const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
+pub const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const TEXT: &str = "org.a11y.atspi.Text";
 // AtspiStateType indices (bit n of the first u32 returned by GetState)
-const ROLE_PASSWORD_TEXT: u32 = 40;
+pub const ROLE_PASSWORD_TEXT: u32 = 40;
 const STATE_FOCUSED: u32 = 12;
 const STATE_EDITABLE: u32 = 7;
 
@@ -23,7 +23,7 @@ pub struct TextBox {
     pub selected: String,
 }
 
-type Target = (String, String); // (bus name, object path)
+pub type Target = (String, String); // (bus name, object path)
 static FOCUS: Mutex<Option<Target>> = Mutex::new(None);
 static QUERY_CONN: OnceLock<Option<Connection>> = OnceLock::new();
 
@@ -76,13 +76,13 @@ fn conn() -> Option<&'static Connection> {
     QUERY_CONN.get()?.as_ref()
 }
 
-fn call<B: zbus::zvariant::DynamicType + zbus::export::serde::Serialize>(
+pub fn call<B: zbus::zvariant::DynamicType + zbus::export::serde::Serialize>(
     t: &Target, iface: &str, member: &str, body: &B,
 ) -> Option<zbus::Message> {
     conn()?.call_method(Some(t.0.as_str()), t.1.as_str(), Some(iface), member, body).ok()
 }
 
-fn prop<T: TryFrom<OwnedValue>>(t: &Target, iface: &str, name: &str) -> Option<T> {
+pub fn prop<T: TryFrom<OwnedValue>>(t: &Target, iface: &str, name: &str) -> Option<T> {
     let m = call(t, "org.freedesktop.DBus.Properties", "Get", &(iface, name))?;
     T::try_from(m.body().deserialize::<OwnedValue>().ok()?).ok()
 }
@@ -92,7 +92,7 @@ pub fn focused_pid() -> Option<u32> {
     bus_pid(&focus()?.0)
 }
 
-fn bus_pid(bus: &str) -> Option<u32> {
+pub fn bus_pid(bus: &str) -> Option<u32> {
     let m = conn()?.call_method(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", Some("org.freedesktop.DBus"),
         "GetConnectionUnixProcessID", &(bus,)).ok()?;
     m.body().deserialize().ok()
@@ -159,31 +159,20 @@ const STATE_ACTIVE: u32 = 1;
 const STATE_SHOWING: u32 = 25;
 const URL_NODE_LIMIT: usize = 300;
 
-fn state_bits(t: &Target) -> Option<u32> {
+pub fn state_bits(t: &Target) -> Option<u32> {
     let s: Vec<u32> = call(t, ACCESSIBLE, "GetState", &())?.body().deserialize().ok()?;
     s.first().copied()
 }
 
-fn children(t: &Target) -> Vec<Target> {
+pub fn children(t: &Target) -> Vec<Target> {
     call(t, ACCESSIBLE, "GetChildren", &())
         .and_then(|m| m.body().deserialize::<Vec<(String, zbus::zvariant::OwnedObjectPath)>>().ok())
         .map(|v| v.into_iter().map(|(bus, path)| (bus, path.to_string())).collect())
         .unwrap_or_default()
 }
 
-/// URL of the visible page in the active window of browser process `pid` (Firefox; Chrome/Chromium only with
-/// --force-renderer-accessibility). Found through the registry, not focus: Chrome sends no focus events.
-/// Wispr reads the meeting service (Meet, Teams, Zoom web) from it, as it does from the address bar on Windows.
-pub fn active_url(pid: u32) -> Option<String> {
-    let deadline = Instant::now() + BUDGET;
-    let registry = ("org.a11y.atspi.Registry".to_string(), "/org/a11y/atspi/accessible/root".to_string());
-    let app = children(&registry).into_iter().find(|(bus, _)| bus_pid(bus) == Some(pid))?;
-    // only the active window, and never a private one: the URL goes to Wispr's servers
-    let frame = children(&app).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
-    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
-    if is_private_window(&title) {
-        return None;
-    }
+/// The visible web document under `frame` and its URL. Never descends into page content.
+fn document_in(frame: Target, deadline: Instant) -> Option<(Target, String)> {
     let (mut stack, mut seen) = (vec![frame], 0);
     while let Some(node) = stack.pop() {
         seen += 1;
@@ -199,7 +188,7 @@ pub fn active_url(pid: u32) -> Option<String> {
                 let url: Option<String> = call(&node, "org.a11y.atspi.Document", "GetAttributeValue", &(key,))
                     .and_then(|m| m.body().deserialize().ok());
                 if let Some(url) = url.filter(|u| u.starts_with("http")) {
-                    return Some(url);
+                    return Some((node, url));
                 }
             }
             continue; // never descend into page content
@@ -207,6 +196,46 @@ pub fn active_url(pid: u32) -> Option<String> {
         stack.extend(children(&node).into_iter().rev());
     }
     None
+}
+
+fn registry() -> Target {
+    ("org.a11y.atspi.Registry".to_string(), "/org/a11y/atspi/accessible/root".to_string())
+}
+
+/// URL of the visible page in the active window of browser process `pid` (Firefox; Chrome/Chromium only with
+/// --force-renderer-accessibility). Found through the registry, not focus: Chrome sends no focus events.
+/// Wispr reads the meeting service (Meet, Teams, Zoom web) from it, as it does from the address bar on Windows.
+pub fn active_url(pid: u32) -> Option<String> {
+    let deadline = Instant::now() + BUDGET;
+    let app = children(&registry()).into_iter().find(|(bus, _)| bus_pid(bus) == Some(pid))?;
+    // only the active window, and never a private one: the URL goes to Wispr's servers
+    let frame = children(&app).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
+    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
+    if is_private_window(&title) {
+        return None;
+    }
+    document_in(frame, deadline).map(|(_, url)| url)
+}
+
+const BROWSERS: [&str; 8] = ["firefox", "chrome", "chromium", "brave", "msedge", "vivaldi", "zen", "opera"];
+
+/// Visible web documents (node, URL) of every browser window that is not private, active or not (150 ms per window).
+// ponytail: browsers recognized by process name; a renamed binary is not found
+pub fn browser_documents() -> Vec<(Target, String)> {
+    let is_browser = |bus: &str| {
+        let comm = bus_pid(bus).and_then(|p| std::fs::read_to_string(format!("/proc/{p}/comm")).ok()).unwrap_or_default().to_lowercase();
+        BROWSERS.iter().any(|b| comm.contains(b))
+    };
+    let mut docs = Vec::new();
+    for app in children(&registry()).into_iter().filter(|(bus, _)| is_browser(bus)) {
+        for frame in children(&app) {
+            let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
+            if !is_private_window(&title) && let Some(doc) = document_in(frame, Instant::now() + BUDGET) {
+                docs.push(doc);
+            }
+        }
+    }
+    docs
 }
 
 /// Identity of the focused object, to notice when focus moves elsewhere.
