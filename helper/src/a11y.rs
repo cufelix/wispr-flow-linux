@@ -219,7 +219,7 @@ pub fn active_url(pid: u32) -> Option<String> {
     // only the active window, and never a private one: the URL goes to Wispr's servers
     let frame = children(&app).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
     let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
-    if is_private_window(&title) {
+    if !readable(&title) {
         return None;
     }
     document_in(frame, deadline).map(|(_, url)| url)
@@ -269,7 +269,7 @@ pub fn browser_documents() -> Vec<(Target, String)> {
     for app in children(&registry()).into_iter().filter(|(bus, _)| is_browser(bus)) {
         for frame in children(&app) {
             let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
-            if !is_private_window(&title) && let Some(doc) = document_in(frame, Instant::now() + BUDGET) {
+            if readable(&title) && let Some(doc) = document_in(frame, Instant::now() + BUDGET) {
                 docs.push(doc);
             }
         }
@@ -286,6 +286,8 @@ const NEARBY_NODE_LIMIT: usize = 250;
 const NEARBY_BUDGET: Duration = Duration::from_millis(300);
 const NEARBY_CHARS: usize = 4000;
 const NEARBY_LINE: usize = 300;
+/// label, table cell, paragraph, heading, section, list item, link, static text
+const PROSE_ROLES: [u32; 8] = [29, 56, 73, 83, 85, 86, 88, 116];
 
 /// Visible text of the active window of the focused app (labels, headings, messages), one item per line.
 /// Wispr uses it to spell the names and terms on screen, as its macOS/Windows helpers do.
@@ -299,7 +301,7 @@ pub fn nearby_text() -> Option<String> {
         return None;
     }
     let (frame, title) = active_frame(&focused)?;
-    if is_private_window(&title) {
+    if !readable(&title) {
         return None;
     }
     let deadline = Instant::now() + NEARBY_BUDGET;
@@ -318,11 +320,11 @@ pub fn nearby_text() -> Option<String> {
             continue;
         }
         let name: String = prop(&node, ACCESSIBLE, "Name").unwrap_or_default();
-        // an unnamed node's own text only if it is not an input: other fields (codes, card numbers) stay unread
-        let editable = state_bits(&node).is_some_and(|s| s & (1 << STATE_EDITABLE) != 0);
+        // an unnamed node's own text only where text is prose: fields of any kind (codes, card numbers, a revealed
+        // password, read-only or not) and terminals stay unread
         let text = if !name.trim().is_empty() {
             name
-        } else if editable {
+        } else if !PROSE_ROLES.contains(&role) {
             String::new()
         } else {
             call(&node, TEXT, "GetText", &(0i32, NEARBY_LINE as i32)).and_then(|m| m.body().deserialize::<String>().ok()).unwrap_or_default()
@@ -334,18 +336,39 @@ pub fn nearby_text() -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
-/// The active window of the app owning `focused`, with its title.
+/// The window `focused` is in, with its title, if that window is the active one. Found by walking up from the
+/// object, not by asking the app for its active window: an app can have several, and only one holds the object.
 fn active_frame(focused: &Target) -> Option<(Target, String)> {
-    let root = (focused.0.clone(), "/org/a11y/atspi/accessible/root".to_string());
-    let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
-    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
-    Some((frame, title))
+    let mut node = focused.clone();
+    for _ in 0..64 {
+        let (bus, path): (String, zbus::zvariant::OwnedObjectPath) = prop(&node, ACCESSIBLE, "Parent")?;
+        if path.as_str().ends_with("/root") {
+            if state_bits(&node).is_none_or(|s| s & (1 << STATE_ACTIVE) == 0) {
+                return None;
+            }
+            let title: String = prop(&node, ACCESSIBLE, "Name").unwrap_or_default();
+            return Some((node, title));
+        }
+        node = (bus, path.to_string());
+    }
+    None
+}
+
+/// A window whose title says it may be read: a title we could not get, or an empty one, is not that.
+pub fn readable(title: &str) -> bool {
+    !title.trim().is_empty() && !is_private_window(title)
+}
+
+/// Whether the object AT-SPI last reported as focused still says it is. An app that gives no focus events
+/// (or none at all) leaves a stale focus behind; without this we would read the window the user already left.
+pub fn focus_confirmed() -> bool {
+    focus().is_some_and(|f| state_bits(&f).is_some_and(|s| s & (1 << STATE_FOCUSED) != 0))
 }
 
 /// Whether the focused text box sits in a window we may read: one whose title we can see and that is not private.
 /// Unknown counts as no.
 pub fn focused_window_readable() -> bool {
-    focus().and_then(|f| active_frame(&f)).is_some_and(|(_, title)| !title.trim().is_empty() && !is_private_window(&title))
+    focus_confirmed() && focus().and_then(|f| active_frame(&f)).is_some_and(|(_, title)| readable(&title))
 }
 
 /// Appends `text` as one line, skipping blanks, object placeholders and immediate repeats.
@@ -394,8 +417,9 @@ pub fn meeting_url_from_title(title: &str) -> Option<String> {
 /// "… InPrivate", Brave "… Private", and the same in other UI languages.
 // ponytail: a title word list (browsers expose no private flag over X11/AT-SPI); add words as languages come up
 pub fn is_private_window(title: &str) -> bool {
-    const MARKS: [&str; 12] = ["private", "privat", "privé", "privad", "privát", "incognito", "inkognito", "incógnito",
-        "anonym", "inprivate", "приват", "инкогнито"];
+    const MARKS: [&str; 24] = ["private", "privat", "privé", "privad", "privát", "prywatn", "incognito", "inkognito",
+        "incógnito", "anonym", "anonim", "anôn", "anón", "inprivate", "приват", "инкогнито", "gizli", "yksityi",
+        "シークレット", "プライベート", "시크릿", "无痕", "無痕", "隐私"];
     let title = title.to_lowercase();
     MARKS.iter().any(|m| title.contains(m))
 }
@@ -422,6 +446,10 @@ mod tests {
         assert!(is_private_window("Nová karta – Google Chrome (Anonymní)"));
         assert!(is_private_window("Neuer Tab - Google Chrome (Inkognito)"));
         assert!(is_private_window("New tab - Microsoft Edge InPrivate"));
+        assert!(is_private_window("Navigazione anonima - Mozilla Firefox"));
+        assert!(is_private_window("Przeglądanie prywatne — Mozilla Firefox"));
+        assert!(is_private_window("新しいタブ - Google Chrome (シークレット)"));
+        assert!(!readable("") && !readable("x (Incognito)") && readable("Inbox - Mozilla Firefox"));
     }
 
     #[test]

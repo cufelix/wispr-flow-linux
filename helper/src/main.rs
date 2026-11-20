@@ -128,12 +128,21 @@ enum Job {
     CopySelection(String), // request uuid
 }
 
+/// Whether the AT-SPI focus belongs to a window the user is no longer in. X11: its process is not the active
+/// window's. Wayland (no active window to compare with): the focused object no longer says it is focused.
+fn focus_is_stale(x11: Option<&output::AppInfo>) -> bool {
+    match x11.filter(|a| !a.class.is_empty()) {
+        Some(a) => a.pid.is_none() || a.pid != a11y::focused_pid(),
+        None => !a11y::focus_confirmed(),
+    }
+}
+
 /// Prefers AT-SPI; without it we cannot read the text box, but there always is one to paste
 /// into; `accessibilityIsFunctioning: false` makes Wispr fetch selected text via GetSelectedTextViaCopy.
 /// `x11`: the active X11 window, if any. AT-SPI focus that isn't in that window's process is stale
 /// (e.g. you switched to an app without accessibility); on Wayland there is nothing to check against.
 fn text_box_info(x11: Option<output::AppInfo>) -> Value {
-    let stale = x11.filter(|a| !a.class.is_empty()).is_some_and(|a| a.pid.is_none() || a.pid != a11y::focused_pid());
+    let stale = focus_is_stale(x11.as_ref());
     if let Some(t) = a11y::text_box().filter(|_| !stale) {
         return json!({ "payload": { "accessibilityIsFunctioning": true, "couldNotGetTextBoxInfo": false,
             "isEditable": true, "beforeText": t.before, "afterText": t.after,
@@ -206,7 +215,7 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
             media::dictation_start();
             let x11 = out.map(|o| o.lock().unwrap().active_app());
             // AT-SPI focus that is not in the active X11 window is stale: do not read that app
-            let stale = x11.as_ref().filter(|a| !a.class.is_empty()).is_some_and(|a| a.pid.is_none() || a.pid != a11y::focused_pid());
+            let stale = focus_is_stale(x11.as_ref());
             ipc::request("TextBoxInfo", text_box_info(x11));
             if !stale && context_awareness_on() {
                 std::thread::spawn(|| {
@@ -310,7 +319,7 @@ fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
     let id = payload["pasteId"].as_str().map(str::to_owned);
     ipc::request("PasteOutcome", json!({ "payload": payload }));
     if let (true, Some(id)) = (observe, id) {
-        watch_edits(seq, id, text.to_string());
+        watch_edits(seq, id, text.to_string(), out.map(|o| o.lock().unwrap().active_app()));
     }
 }
 
@@ -321,14 +330,14 @@ static PASTE_SEQ: AtomicU64 = AtomicU64::new(0);
 /// e.g. "Auto-add to dictionary". Needs AT-SPI; without it nothing is reported. Like the window context,
 /// it follows Wispr's "Context awareness" setting and never reads a private browser window.
 // ponytail: 1 s polling for at most 60 s; switch to AT-SPI text-changed events if that proves too coarse
-fn watch_edits(seq: u64, paste_id: String, pasted: String) {
+fn watch_edits(seq: u64, paste_id: String, pasted: String, x11: Option<output::AppInfo>) {
     if !context_awareness_on() {
         return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400)); // let the app insert the text
-        if !a11y::focused_window_readable() {
-            return; // private window, or a window we cannot identify
+        if focus_is_stale(x11.as_ref()) || !a11y::focused_window_readable() {
+            return; // the text went to another app than the one AT-SPI sees, a private window, or one we cannot identify
         }
         let (Some(focus), Some(tb)) = (a11y::focus_id(), a11y::text_box()) else { return };
         let Some((prefix, suffix)) = a11y::paste_anchor(&tb, &pasted).map(|(p, s)| (p.to_string(), s.to_string())) else { return };
@@ -374,7 +383,9 @@ fn app_payload(a: &output::AppInfo) -> Value {
     let browser = BROWSERS.contains(&id.as_str());
     let url = a.pid.filter(|_| browser).and_then(a11y::active_url);
     let url = url.or_else(|| browser.then(|| a11y::meeting_url_from_title(&a.title)).flatten()).unwrap_or_default();
-    json!({ "appName": a.class, "bundleId": id, "url": url, "windowTitle": a.title })
+    // a private window's title names the page: Wispr gets the app, not what is open in it
+    let title = if a11y::is_private_window(&a.title) { "" } else { a.title.as_str() };
+    json!({ "appName": a.class, "bundleId": id, "url": url, "windowTitle": title })
 }
 
 fn with_a11y_name(mut a: output::AppInfo) -> output::AppInfo {
