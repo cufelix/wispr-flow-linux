@@ -217,6 +217,36 @@ pub fn active_url(pid: u32) -> Option<String> {
     document_in(frame, deadline).map(|(_, url)| url)
 }
 
+const ROLE_PAGE_TAB: u32 = 37;
+const TAB_NODE_LIMIT: usize = 1500;
+
+/// Titles of the tabs of every window of browser process `pid`, from its tab strips. None when no tab could be read
+/// (accessibility off, a private window, too slow): "no tabs seen" must never read as "the tab is closed".
+pub fn tab_titles(pid: u32) -> Option<Vec<String>> {
+    let deadline = Instant::now() + Duration::from_millis(400);
+    let app = children(&registry()).into_iter().find(|(bus, _)| bus_pid(bus) == Some(pid))?;
+    let (mut stack, mut seen, mut tabs) = (Vec::new(), 0, Vec::new());
+    for frame in children(&app) {
+        if is_private_window(&prop::<String>(&frame, ACCESSIBLE, "Name").unwrap_or_default()) {
+            return None; // a private window may hold the tab; its tabs are not ours to read
+        }
+        stack.push(frame);
+    }
+    while let Some(node) = stack.pop() {
+        seen += 1;
+        if seen > TAB_NODE_LIMIT || Instant::now() > deadline {
+            return None; // an incomplete list is not a list
+        }
+        match call(&node, ACCESSIBLE, "GetRole", &()).and_then(|m| m.body().deserialize::<u32>().ok()) {
+            Some(ROLE_DOCUMENT_WEB) => {} // never descend into page content
+            Some(ROLE_PAGE_TAB) => tabs.push(prop(&node, ACCESSIBLE, "Name").unwrap_or_default()),
+            Some(_) => stack.extend(children(&node)),
+            None => return None,
+        }
+    }
+    (!tabs.is_empty()).then_some(tabs)
+}
+
 const BROWSERS: [&str; 8] = ["firefox", "chrome", "chromium", "brave", "msedge", "vivaldi", "zen", "opera"];
 
 /// Visible web documents (node, URL) of every browser window that is not private, active or not (150 ms per window).

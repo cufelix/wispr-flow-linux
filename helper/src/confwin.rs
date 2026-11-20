@@ -3,8 +3,9 @@
 //! released Wispr can tell the window itself went away (call left, window closed) and stop at once instead of
 //! asking first. Only a tracked window that then vanishes from the X11 client list is reported as removed; whatever
 //! this cannot tell (title changed, no window found, no X11) is never an end.
-// ponytail: a browser window shows the title of its active tab only, so closing the Meet tab of a window that has
-// other tabs is invisible here (the title just changes: "unknown"); an AT-SPI tab list would cover that.
+//! A window shows only its active tab's title, so the browser's tab strip is read too (AT-SPI): the Meet tab closed
+//! in a window that stays open counts as removed, and a Meet tab that is merely in the background as present.
+// ponytail: where the tab strip cannot be read (accessibility off), a closed tab in a surviving window stays "unknown".
 
 use crate::{mic, output};
 use serde_json::{json, Value};
@@ -28,6 +29,7 @@ struct Tracker {
     needle: String,
     family: String, // Wispr browser id of the call's browser, e.g. "chrome"
     tracked: Option<u32>,
+    tab_seen: bool, // the call's tab was once found in the tab strip
     removed: u64,
     changed: Option<Instant>,
     sampled: Option<Instant>,
@@ -39,7 +41,7 @@ impl Tracker {
         let family = bundle_ids.first().map(|b| b.trim_end_matches(".exe").to_lowercase()).unwrap_or_default();
         let known = bundle_ids.len() == 1 && ["chrome", "msedge"].contains(&family.as_str());
         let transition = if known && needle.len() >= MIN_NEEDLE { "arm_no_candidate" } else { "arm_incomplete" };
-        Self { generation, needle: needle.to_lowercase(), family, tracked: None, removed: 0, changed: None, sampled: None, transition }
+        Self { generation, needle: needle.to_lowercase(), family, tracked: None, tab_seen: false, removed: 0, changed: None, sampled: None, transition }
     }
 
     fn is_candidate(&self, a: &output::AppInfo) -> bool {
@@ -48,7 +50,8 @@ impl Tracker {
             && a.title.to_lowercase().contains(&self.needle)
     }
 
-    fn observe(&mut self, wins: &Windows, now: Instant) {
+    /// `tabs`: titles of the tracked browser's tabs, None when its tab strip could not be read.
+    fn observe(&mut self, wins: &Windows, tabs: Option<&[String]>, now: Instant) {
         // an empty list is a window manager restart or a failed read, not "every window closed"
         if wins.is_empty() || self.transition == "arm_incomplete" || self.removed > 0 {
             return;
@@ -56,7 +59,18 @@ impl Tracker {
         self.sampled = Some(now);
         match self.tracked {
             Some(id) => match wins.iter().find(|w| w.0 == id) {
-                Some((_, a)) => self.transition = if self.is_candidate(a) { "present" } else { "unknown" },
+                Some((_, a)) => {
+                    let in_tabs = tabs.map(|t| t.iter().any(|t| t.to_lowercase().contains(&self.needle)));
+                    self.tab_seen |= in_tabs == Some(true);
+                    if self.is_candidate(a) || in_tabs == Some(true) {
+                        self.transition = "present";
+                    } else if in_tabs == Some(false) && self.tab_seen {
+                        // the window lives on, the call's tab is gone from a tab strip that used to show it
+                        (self.tracked, self.removed, self.changed, self.transition) = (None, 1, Some(now), "window_removed");
+                    } else {
+                        self.transition = "unknown";
+                    }
+                }
                 None => {
                     (self.tracked, self.removed, self.changed, self.transition) = (None, 1, Some(now), "window_removed");
                 }
@@ -127,7 +141,9 @@ fn poll(conn: RustConnection, root: u32, generation: u64) {
         if let Ok(wins) = output::client_windows(&conn, root)
             && let Some(t) = MONITOR.lock().unwrap().as_mut().filter(|t| t.generation == generation)
         {
-            t.observe(&wins, Instant::now());
+            let pid = t.tracked.and_then(|id| wins.iter().find(|w| w.0 == id)).and_then(|w| w.1.pid);
+            let tabs = pid.and_then(crate::a11y::tab_titles);
+            t.observe(&wins, tabs.as_deref(), Instant::now());
         }
         std::thread::sleep(POLL);
     }
@@ -147,34 +163,51 @@ mod tests {
         let mut t = Tracker::new(1, "ABC-defg-hij", &["chrome.exe"]);
         let now = Instant::now();
         let other = win(2, "Google-chrome", "Inbox - Google Chrome");
-        t.observe(std::slice::from_ref(&other), now);
+        t.observe(std::slice::from_ref(&other), None, now);
         assert_eq!((t.transition, t.removed), ("arm_no_candidate", 0)); // never seen: never "removed"
-        t.observe(&[other.clone(), win(7, "Google-chrome", MEET)], now);
+        t.observe(&[other.clone(), win(7, "Google-chrome", MEET)], None, now);
         assert_eq!(t.transition, "located");
-        t.observe(&[other.clone(), win(7, "Google-chrome", MEET)], now);
+        t.observe(&[other.clone(), win(7, "Google-chrome", MEET)], None, now);
         assert_eq!(t.transition, "present");
-        t.observe(&[other.clone(), win(7, "Google-chrome", "Docs - Google Chrome")], now); // tab switched: cannot tell
+        t.observe(&[other.clone(), win(7, "Google-chrome", "Docs - Google Chrome")], None, now); // tab switched: cannot tell
         assert_eq!((t.transition, t.removed), ("unknown", 0));
-        t.observe(&[], now); // window manager hiccup is not a closed window
+        t.observe(&[], None, now); // window manager hiccup is not a closed window
         assert_eq!(t.removed, 0);
-        t.observe(std::slice::from_ref(&other), now);
+        t.observe(std::slice::from_ref(&other), None, now);
         assert_eq!((t.transition, t.removed), ("window_removed", 1));
         let p = t.payload(now + Duration::from_millis(1200));
         assert_eq!((p["monitorWindowChangeAgeMs"].as_u64(), p["monitorGeneration"].as_u64()), (Some(1200), Some(1)));
     }
 
     #[test]
+    fn a_closed_tab_in_a_surviving_window_is_removed_only_if_the_tab_strip_showed_it() {
+        let now = Instant::now();
+        let tabs = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let docs = win(7, "Google-chrome", "Docs - Google Chrome");
+        let mut t = Tracker::new(1, "abc-defg-hij", &["chrome.exe"]);
+        t.observe(&[win(7, "Google-chrome", MEET)], None, now);
+        t.observe(std::slice::from_ref(&docs), Some(&tabs(&["Docs"])), now); // strip never showed the call: cannot tell
+        assert_eq!((t.transition, t.removed), ("unknown", 0));
+        t.observe(std::slice::from_ref(&docs), Some(&tabs(&["Docs", "Meet - abc-defg-hij"])), now); // background tab
+        assert_eq!(t.transition, "present");
+        t.observe(std::slice::from_ref(&docs), None, now); // unreadable strip
+        assert_eq!((t.transition, t.removed), ("unknown", 0));
+        t.observe(std::slice::from_ref(&docs), Some(&tabs(&["Docs"])), now);
+        assert_eq!((t.transition, t.removed), ("window_removed", 1));
+    }
+
+    #[test]
     fn ambiguous_private_foreign_and_incomplete_targets_never_track() {
         let now = Instant::now();
         let mut t = Tracker::new(1, "abc-defg-hij", &["chrome.exe"]);
-        t.observe(&[win(1, "Google-chrome", MEET), win(2, "Chromium-browser", MEET)], now);
+        t.observe(&[win(1, "Google-chrome", MEET), win(2, "Chromium-browser", MEET)], None, now);
         assert_eq!((t.transition, t.tracked), ("arm_ambiguous", None));
         let mut t = Tracker::new(1, "abc-defg-hij", &["chrome.exe"]);
-        t.observe(&[win(1, "Google-chrome", "Meet - abc-defg-hij - Google Chrome (Incognito)"), win(2, "firefox", MEET)], now);
+        t.observe(&[win(1, "Google-chrome", "Meet - abc-defg-hij - Google Chrome (Incognito)"), win(2, "firefox", MEET)], None, now);
         assert_eq!(t.tracked, None);
         for (needle, ids) in [("meet.google.com", vec![]), ("abc", vec!["chrome.exe"]), ("abc-defg-hij", vec!["firefox.exe"])] {
             let mut t = Tracker::new(1, needle, &ids);
-            t.observe(&[win(1, "Google-chrome", MEET)], now);
+            t.observe(&[win(1, "Google-chrome", MEET)], None, now);
             assert_eq!(t.transition, "arm_incomplete");
         }
     }
