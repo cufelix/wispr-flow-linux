@@ -280,6 +280,19 @@ const patches = [
     re: /if\("linux"===process\.platform\)return [a-zA-Z$]+\(\)\.info\("\[MeetingDisplayMedia\] Skipping handler install on Linux[^"]*"\),void\([a-zA-Z$]+=!0\);([^;]{0,120}\{if\()("win32"===process\.platform)(\)return void [a-zA-Z$]+\(\{audio:"loopback"\}\))/,
     to: (_, a, gate, b) => `${a}${gate}||${LINUX}${b}`,
   },
+  // Speaker names in meeting transcripts: Wispr starts speaker polling only on macOS/Windows and, on Linux, would only
+  // ever accept Chrome/Brave/Edge as the browser. The helper reads the Meet tab over AT-SPI (speakers.rs); Firefox is
+  // the browser whose page content AT-SPI sees without any flag.
+  {
+    name: "meeting speakers: start speaker polling on Linux",
+    re: /([a-zA-Z$]+=new Set\(\["darwin","win32")(\]\),[a-zA-Z$]+=new WeakSet,[a-zA-Z$]+=new WeakMap)/,
+    to: (_, a, b) => `${a},"linux"${b}`,
+  },
+  {
+    name: "meeting speakers: accept Firefox as the meeting browser",
+    re: /(=new Set\(\["brave","chrome","edge")(\]\),[\w$]+=e=>[\w$]+\.has\(e\),[\w$]+=new Set\(\["darwin","win32")/,
+    to: (_, a, b) => `${a},"firefox"${b}`,
+  },
   // Linux has no setIgnoreMouseEvents({forward}), so the floating bar is clickable only through the cursor poll
   // (ignoreMouseEventsWhenNotInAlphaRegion); poll faster than the default 400ms so the bar reacts when the pointer arrives.
   {

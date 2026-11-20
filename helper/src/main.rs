@@ -13,6 +13,7 @@ mod layout;
 mod media;
 mod mic;
 mod output;
+mod speakers;
 
 use serde_json::{json, Value};
 use std::io::Read;
@@ -164,6 +165,14 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
         "SetMicrophoneHoldersMonitor" => {
             let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
             mic::set_monitor(p["enabled"].as_bool().unwrap_or(false), p["cadenceMs"].as_u64())
+        }
+        "StartSpeakerPolling" => {
+            speakers::start(&req[kind]["payload"]);
+            json!({ "ACK": true })
+        }
+        "StopSpeakerPolling" => {
+            speakers::stop();
+            json!({ "ACK": true })
         }
         "BleStartPairing" => {
             ble::start_pairing(req["BleStartPairing"]["payload"]["scanDurationSeconds"].as_u64().unwrap_or(30));
