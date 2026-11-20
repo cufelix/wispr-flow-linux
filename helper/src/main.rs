@@ -16,6 +16,7 @@ mod mic;
 mod output;
 mod slack;
 mod speakers;
+mod tabscan;
 
 use serde_json::{json, Value};
 use std::io::Read;
@@ -187,6 +188,7 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
             return;
         }
         // only the conference window monitor (arm/read/disarm); a plain end-state read needs the page's accessibility tree
+        "GetMeetingTabScan" => tabscan::scan(),
         "GetConferenceEndState" => confwin::control(&req[kind]["payload"]).unwrap_or_else(|| json!({ "ACK": true })),
         "SetMicrophoneHoldersMonitor" => {
             let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
