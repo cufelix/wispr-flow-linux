@@ -171,8 +171,16 @@ pub fn children(t: &Target) -> Vec<Target> {
         .unwrap_or_default()
 }
 
+/// Chrome shows a client only a stub of its window (a handful of nodes: no tab strip, no page) until the client
+/// asks some node for its attributes; from then on the whole tree is there. Costs one call; a read made before
+/// Chrome has finished building the tree comes back empty and the next one works.
+fn wake(frame: &Target) {
+    let _ = call(frame, ACCESSIBLE, "GetAttributes", &());
+}
+
 /// The visible web document under `frame` and its URL. Never descends into page content.
 fn document_in(frame: Target, deadline: Instant) -> Option<(Target, String)> {
+    wake(&frame);
     let (mut stack, mut seen) = (vec![frame], 0);
     while let Some(node) = stack.pop() {
         seen += 1;
@@ -230,6 +238,7 @@ pub fn tab_titles(pid: u32) -> Option<Vec<String>> {
         if is_private_window(&prop::<String>(&frame, ACCESSIBLE, "Name").unwrap_or_default()) {
             return None; // a private window may hold the tab; its tabs are not ours to read
         }
+        wake(&frame);
         stack.push(frame);
     }
     while let Some(node) = stack.pop() {
