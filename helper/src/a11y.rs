@@ -306,7 +306,7 @@ fn active_frame(focused: &Target) -> Option<(Target, String)> {
 /// Whether the focused text box sits in a window we may read: one whose title we can see and that is not private.
 /// Unknown counts as no.
 pub fn focused_window_readable() -> bool {
-    focus().and_then(|f| active_frame(&f)).is_some_and(|(_, title)| !is_private_window(&title))
+    focus().and_then(|f| active_frame(&f)).is_some_and(|(_, title)| !title.trim().is_empty() && !is_private_window(&title))
 }
 
 /// Appends `text` as one line, skipping blanks, object placeholders and immediate repeats.

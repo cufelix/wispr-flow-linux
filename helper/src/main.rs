@@ -5,6 +5,7 @@
 mod a11y;
 mod apps;
 mod ble;
+mod confwin;
 mod cursor;
 mod input;
 mod ipc;
@@ -176,6 +177,8 @@ fn handle_request(req: &Value, out: Option<&Arc<Mutex<output::Output>>>, paster:
                 "platform": p["platform"], "sessionId": p["sessionId"] } }));
             return;
         }
+        // only the conference window monitor (arm/read/disarm); a plain end-state read needs the page's accessibility tree
+        "GetConferenceEndState" => confwin::control(&req[kind]["payload"]).unwrap_or_else(|| json!({ "ACK": true })),
         "SetMicrophoneHoldersMonitor" => {
             let p = &req["SetMicrophoneHoldersMonitor"]["payload"];
             mic::set_monitor(p["enabled"].as_bool().unwrap_or(false), p["cadenceMs"].as_u64())
@@ -338,6 +341,7 @@ fn watch_edits(seq: u64, paste_id: String, pasted: String) {
             if PASTE_SEQ.load(Ordering::SeqCst) != seq { reason = "new_paste"; break; }
             let tb = a11y::text_box().filter(|_| a11y::focus_id().as_deref() == Some(focus.as_str()));
             let Some(tb) = tb else { reason = "focus_lost"; break };
+            if !a11y::focused_window_readable() { reason = "focus_lost"; break } // the window turned private or unreadable
             match a11y::edited_region(&tb.contents, &prefix, &suffix) {
                 Some(now) if now.len() <= limit => edited = now.to_string(),
                 Some(_) => { reason = "region_grew"; break }

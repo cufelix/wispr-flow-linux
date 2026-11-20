@@ -283,11 +283,13 @@ const patches = [
   // Slack on the microphone: Wispr asks the helper whether it is a huddle (GetSlackHuddleState). On Linux the helper
   // answers "huddle" for Slack's pop-out huddle window and "unknown" otherwise, which Wispr treats as a call, as before.
   {
+    extra: "slack huddle",
     name: "slack huddle: ask the helper on Linux",
     re: /("darwin"!==process\.platform&&"win32"!==process\.platform)(\)return [a-zA-Z$]+;const [a-zA-Z$]+=await [a-zA-Z$]+\("GetSlackHuddleState")/,
     to: (_, gate, rest) => `${gate}&&!(${LINUX})${rest}`,
   },
   {
+    extra: "slack huddle",
     name: "slack huddle: do not bypass the huddle read as an unsupported platform on Linux",
     re: /("win32"!==[a-zA-Z$]+\.platform)(\?"platform_unsupported":[a-zA-Z$]+\.recordingActiveOrStopping)/,
     to: (_, gate, rest) => `${gate}&&!(${LINUX})${rest}`,
@@ -303,14 +305,43 @@ const patches = [
   // ever accept Chrome/Brave/Edge as the browser. The helper reads the Meet tab over AT-SPI (speakers.rs); Firefox is
   // the browser whose page content AT-SPI sees without any flag.
   {
+    extra: "meeting speakers",
     name: "meeting speakers: start speaker polling on Linux",
     re: /([a-zA-Z$]+=new Set\(\["darwin","win32")(\]\),[a-zA-Z$]+=new WeakSet,[a-zA-Z$]+=new WeakMap)/,
     to: (_, a, b) => `${a},"linux"${b}`,
   },
   {
+    extra: "meeting speakers",
     name: "meeting speakers: accept Firefox as the meeting browser",
     re: /(=new Set\(\["brave","chrome","edge")(\]\),[\w$]+=e=>[\w$]+\.has\(e\),[\w$]+=new Set\(\["darwin","win32")/,
     to: (_, a, b) => `${a},"firefox"${b}`,
+  },
+  // Conference window monitor: when the mic holder drops, Wispr asks the helper whether the Meet window itself is gone
+  // and, if so, stops at once instead of prompting. Opened for Chrome-family Meet calls; the helper answers from the
+  // X11 window list (confwin.rs). Everything else (tab scan, strip monitor, end-state controls) stays off on Linux.
+  {
+    extra: "conference window monitor",
+    name: "conference window monitor: feed mode on Linux",
+    re: /([a-zA-Z$]+=[a-zA-Z$]+\|\|[a-zA-Z$]+)(\?"feed":"off",[a-zA-Z$]+=[a-zA-Z$]+&&[a-zA-Z$]+&&"feed"===)/,
+    to: (_, a, b) => `${a}||${LINUX}${b}`,
+  },
+  {
+    extra: "conference window monitor",
+    name: "conference window monitor: subscribe on Linux",
+    re: /([a-zA-Z$]+=\(\)=>"darwin"===process\.platform\|\|"win32"===process\.platform)(;let [a-zA-Z$]+=null,[a-zA-Z$]+=0,[a-zA-Z$]+=null)/,
+    to: (_, a, b) => `${a}||${LINUX}${b}`,
+  },
+  {
+    extra: "conference window monitor",
+    name: "conference window monitor: arm on Linux",
+    re: /(jc\(\)\?"darwin"!==process\.platform&&"win32"!==process\.platform)(\?"platform_unsupported")/,
+    to: (_, a, b) => `${a}&&!(${LINUX})${b}`,
+  },
+  {
+    extra: "conference window monitor",
+    name: "conference window monitor: browser ids on Linux (Windows exe names; the helper maps them to its X11 windows)",
+    re: /"win32"===process\.platform(\?[a-zA-Z$]+\.rA\[e\.platform\]:[a-zA-Z$]+\.yt\[e\.platform\])/,
+    to: (_, a) => `("win32"===process.platform||${LINUX})${a}`,
   },
   // Linux has no setIgnoreMouseEvents({forward}), so the floating bar is clickable only through the cursor poll
   // (ignoreMouseEventsWhenNotInAlphaRegion); poll faster than the default 400ms so the bar reacts when the pointer arrives.
@@ -326,14 +357,18 @@ const patches = [
 const rendererShortcutDefaults = { hub: 9, status: 5, contextMenu: 3, scratchpad: 2, meeting_recorder: 2 };
 
 function applyPatches(src, list = patches) {
+  const hits = (p) => (src.match(new RegExp(p.re.source, "g")) || []).length;
+  // Meeting extras (`extra: group`) are not worth losing the app over: when Wispr changes the code one of them
+  // targets, its whole group is left out (so no half-opened feature) and everything else still installs.
+  const dropped = new Set(list.filter((p) => p.extra && hits(p) !== (p.count ?? 1)).map((p) => p.extra));
+  for (const g of dropped) console.log(`skipped: ${g} (Wispr Flow changed upstream; this extra stays off)`);
   for (const p of list) {
-    const re = new RegExp(p.re.source, "g");
-    const hits = src.match(re) || [];
+    if (dropped.has(p.extra)) continue;
     const want = p.count ?? 1;
-    if (hits.length !== want) {
-      throw new Error(`patch "${p.name}": expected ${want} match(es), found ${hits.length} (Wispr Flow changed upstream; please open an issue)`);
+    if (hits(p) !== want) {
+      throw new Error(`patch "${p.name}": expected ${want} match(es), found ${hits(p)} (Wispr Flow changed upstream; please open an issue)`);
     }
-    src = src.replace(re, p.to);
+    src = src.replace(new RegExp(p.re.source, "g"), p.to);
     console.log(`ok: ${p.name}`);
   }
   return src;
@@ -355,7 +390,7 @@ function applyRendererPatches(src, bundle) {
   return applyPatches(src, list.map((p) => ({ ...p, name: `${p.name} (${bundle} renderer)` })));
 }
 
-module.exports = { applyPatches, applyRendererPatches, linuxAlphaShape, rendererBundles: Object.keys(rendererShortcutDefaults) };
+module.exports = { patches, applyPatches, applyRendererPatches, linuxAlphaShape, rendererBundles: Object.keys(rendererShortcutDefaults) };
 
 if (require.main === module) {
   const file = process.argv[2];

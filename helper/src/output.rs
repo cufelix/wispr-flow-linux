@@ -144,14 +144,29 @@ fn active_x11_app(conn: &RustConnection, root: Window) -> Result<AppInfo> {
         .value32()
         .and_then(|mut v| v.next())
         .context("no active window")?;
-    let class_raw = conn.get_property(false, active, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)?.reply()?.value;
+    window_info(conn, active)
+}
+
+fn window_info(conn: &RustConnection, win: Window) -> Result<AppInfo> {
+    let class_raw = conn.get_property(false, win, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)?.reply()?.value;
     // WM_CLASS = "instance\0Class\0"
     let class = class_raw.split(|&b| b == 0).rfind(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).unwrap_or_default();
     let utf8 = atom(conn, "UTF8_STRING")?;
-    let title_raw = conn.get_property(false, active, atom(conn, "_NET_WM_NAME")?, utf8, 0, 1024)?.reply()?.value;
-    let pid = conn.get_property(false, active, atom(conn, "_NET_WM_PID")?, AtomEnum::CARDINAL, 0, 1)?
+    let title_raw = conn.get_property(false, win, atom(conn, "_NET_WM_NAME")?, utf8, 0, 1024)?.reply()?.value;
+    let pid = conn.get_property(false, win, atom(conn, "_NET_WM_PID")?, AtomEnum::CARDINAL, 0, 1)?
         .reply()?.value32().and_then(|mut v| v.next());
     Ok(AppInfo { class, title: String::from_utf8_lossy(&title_raw).into_owned(), pid })
+}
+
+/// Every managed top-level window (window id, class/title/pid), from the window manager's client list.
+pub fn client_windows(conn: &RustConnection, root: Window) -> Result<Vec<(Window, AppInfo)>> {
+    let ids: Vec<Window> = conn
+        .get_property(false, root, atom(conn, "_NET_CLIENT_LIST")?, AtomEnum::WINDOW, 0, 4096)?
+        .reply()?
+        .value32()
+        .context("no _NET_CLIENT_LIST")?
+        .collect();
+    Ok(ids.into_iter().filter_map(|w| window_info(conn, w).ok().map(|a| (w, a))).collect())
 }
 
 #[cfg(test)]
