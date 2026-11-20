@@ -298,7 +298,7 @@ fn paste(out: Option<&Mutex<output::Output>>, text: &str, paste_id: Value) {
     let id = payload["pasteId"].as_str().map(str::to_owned);
     ipc::request("PasteOutcome", json!({ "payload": payload }));
     if let (true, Some(id)) = (observe, id) {
-        watch_edits(seq, id, text.to_string(), out.map(|o| o.lock().unwrap().active_app().title).unwrap_or_default());
+        watch_edits(seq, id, text.to_string());
     }
 }
 
@@ -309,12 +309,15 @@ static PASTE_SEQ: AtomicU64 = AtomicU64::new(0);
 /// e.g. "Auto-add to dictionary". Needs AT-SPI; without it nothing is reported. Like the window context,
 /// it follows Wispr's "Context awareness" setting and never reads a private browser window.
 // ponytail: 1 s polling for at most 60 s; switch to AT-SPI text-changed events if that proves too coarse
-fn watch_edits(seq: u64, paste_id: String, pasted: String, window_title: String) {
-    if !context_awareness_on() || a11y::is_private_window(&window_title) {
+fn watch_edits(seq: u64, paste_id: String, pasted: String) {
+    if !context_awareness_on() {
         return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400)); // let the app insert the text
+        if !a11y::focused_window_readable() {
+            return; // private window, or a window we cannot identify
+        }
         let (Some(focus), Some(tb)) = (a11y::focus_id(), a11y::text_box()) else { return };
         let Some((prefix, suffix)) = a11y::paste_anchor(&tb, &pasted).map(|(p, s)| (p.to_string(), s.to_string())) else { return };
         // corrections stay near the size of what was pasted; anything much longer is new writing, not ours to send

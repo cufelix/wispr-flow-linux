@@ -230,9 +230,7 @@ pub fn nearby_text() -> Option<String> {
     if state_bits(&focused).is_none_or(|s| s & (1 << STATE_FOCUSED) == 0) {
         return None;
     }
-    let root = (focused.0, "/org/a11y/atspi/accessible/root".to_string());
-    let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
-    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
+    let (frame, title) = active_frame(&focused)?;
     if is_private_window(&title) {
         return None;
     }
@@ -266,6 +264,20 @@ pub fn nearby_text() -> Option<String> {
     }
     let out: String = out.chars().take(NEARBY_CHARS).collect();
     (!out.is_empty()).then_some(out)
+}
+
+/// The active window of the app owning `focused`, with its title.
+fn active_frame(focused: &Target) -> Option<(Target, String)> {
+    let root = (focused.0.clone(), "/org/a11y/atspi/accessible/root".to_string());
+    let frame = children(&root).into_iter().find(|f| state_bits(f).is_some_and(|s| s & (1 << STATE_ACTIVE) != 0))?;
+    let title: String = prop(&frame, ACCESSIBLE, "Name").unwrap_or_default();
+    Some((frame, title))
+}
+
+/// Whether the focused text box sits in a window we may read: one whose title we can see and that is not private.
+/// Unknown counts as no.
+pub fn focused_window_readable() -> bool {
+    focus().and_then(|f| active_frame(&f)).is_some_and(|(_, title)| !is_private_window(&title))
 }
 
 /// Appends `text` as one line, skipping blanks, object placeholders and immediate repeats.
